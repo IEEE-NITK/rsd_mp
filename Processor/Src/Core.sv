@@ -141,7 +141,7 @@ output
     FetchStage ifStage( ifStageIF, npStageIF, ctrlIF, debugIF, perfCounterIF );
         ICache iCache( npStageIF, ifStageIF, cacheSystemIF );
     
-    PreDecodeStage pdStage( pdStageIF, ifStageIF, ctrlIF, debugIF );
+    PreDecodeStage pdStage( pdStageIF, ifStageIF, ctrlIF, debugIF, csrUnitIF );
     DecodeStage idStage( idStageIF, pdStageIF, ctrlIF, debugIF, perfCounterIF );
 
     RenameStage rnStage( rnStageIF, idStageIF, renameLogicIF, activeListIF, schedulerIF, loadStoreUnitIF, recoveryManagerIF, ctrlIF, debugIF );
@@ -202,11 +202,11 @@ output
     
     // A commitment stage generates a flush signal and this is send to scheduler.
     CommitStage cmStage( cmStageIF, renameLogicIF, activeListIF, loadStoreUnitIF, recoveryManagerIF, csrUnitIF, debugIF );
-        RecoveryManager recoveryManager( recoveryManagerIF, activeListIF, csrUnitIF, ctrlIF, perfCounterIF );
+        RecoveryManager recoveryManager( recoveryManagerIF, activeListIF, csrUnitIF, idStageIF, ctrlIF, perfCounterIF );
 
-    CSR_Unit csrUnit(csrUnitIF, perfCounterIF);
+    CSR_Unit csrUnit(csrUnitIF, idStageIF, perfCounterIF);
     CacheFlushManager cacheFlushManager( cacheFlushManagerIF, cacheSystemIF );
-    InterruptController interruptCtrl(csrUnitIF, ctrlIF, npStageIF, recoveryManagerIF);
+    InterruptController interruptCtrl(csrUnitIF, ctrlIF, npStageIF, idStageIF, recoveryManagerIF);
     IO_Unit ioUnit(ioUnitIF, csrUnitIF);
 
 endmodule : Core

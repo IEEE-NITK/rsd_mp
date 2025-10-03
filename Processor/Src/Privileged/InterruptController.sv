@@ -16,6 +16,7 @@ module InterruptController(
     CSR_UnitIF.InterruptController csrUnit,
     ControllerIF.InterruptController ctrl,
     NextPCStageIF.InterruptController fetchStage,
+    DecodeStageIF.InterruptController decodeStage,
     RecoveryManagerIF.InterruptController recoveryManager
 );
     logic reqInterrupt, triggerInterrupt;
@@ -64,6 +65,7 @@ module InterruptController(
         csrUnit.triggerInterrupt = triggerInterrupt;
         csrUnit.interruptRetAddr = fetchStage.pcOut;
         csrUnit.interruptCode = interruptCode;
+        csrUnit.interruptELP = decodeStage.elpState;
 
         interruptTargetAddr = ToPC_FromAddr({
             (csrReg.mtvec.mode == CSR_MTVEC_MODE_VECTORED) ? 

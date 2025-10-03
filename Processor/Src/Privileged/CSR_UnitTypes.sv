@@ -23,6 +23,12 @@ typedef struct packed {
     logic [2:0] padding_0;   // 2:0
 } CSR_MSTATUS_Path;
 
+typedef struct packed {
+    logic [21:0] padding_1;
+    ELP_State_Type MPELP;
+    logic [8:0] padding_0;
+} CSR_MSTATUSH_Path;
+
 // Interrupt pending?
 typedef struct packed {
     logic [19:0] padding_3; // 31:12
@@ -56,7 +62,9 @@ typedef enum logic [4:0] {
     CSR_CAUSE_TRAP_CODE_STORE_VIOLATION = 7,
     CSR_CAUSE_TRAP_CODE_MCALL = 11,
 
-    CSR_CAUSE_TRAP_CODE_UNKNOWN = 14
+    CSR_CAUSE_TRAP_CODE_UNKNOWN = 14,
+
+    CSR_CAUSE_TRAP_CODE_SOFTWARE_CHECK = 18
 } CSR_CAUSE_TrapCodePath;
 
 function automatic CSR_CAUSE_TrapCodePath ToTrapCodeFromExecState(ExecutionState state);
@@ -72,6 +80,8 @@ function automatic CSR_CAUSE_TrapCodePath ToTrapCodeFromExecState(ExecutionState
     EXEC_STATE_FAULT_INSN_ILLEGAL:     return CSR_CAUSE_TRAP_CODE_INSN_ILLEGAL;
     EXEC_STATE_FAULT_INSN_VIOLATION:   return CSR_CAUSE_TRAP_CODE_INSN_VIOLATION;
     EXEC_STATE_FAULT_INSN_MISALIGNED:  return CSR_CAUSE_TRAP_CODE_INSN_MISALIGNED;
+
+    EXEC_STATE_FAULT_LPAD: return CSR_CAUSE_TRAP_CODE_SOFTWARE_CHECK;
 
     default: return CSR_CAUSE_TRAP_CODE_UNKNOWN;
     endcase
@@ -119,11 +129,18 @@ typedef struct packed {
     FFlags_Path fflags;
 } CSR_FCSR_Path;
 
+typedef struct packed {
+    logic [20:0] padding_1;
+    logic MLPE;
+    logic [9:0] padding_0;
+} CSR_MSECCFG_Path;
+
 localparam logic [1:0] CSR_MTVEC_BASE_PADDING = 2'b0;
 
 // All members have 32bit width
 typedef union packed {
     CSR_MSTATUS_Path mstatus;
+    CSR_MSTATUSH_Path mstatush; 
     CSR_MIP_Path mip;
     CSR_MIE_Path mie;
     CSR_CAUSE_Path mcause;
@@ -135,11 +152,14 @@ typedef union packed {
     DataPath mcycle;
     DataPath minstret;
     CSR_FCSR_Path fcsr;
+
+    CSR_MSECCFG_Path mseccfg;
 } CSR_ValuePath;
 
 typedef struct packed {
     // Interrupt related registers
     CSR_MSTATUS_Path mstatus;
+    CSR_MSTATUSH_Path mstatush;
     CSR_MIP_Path mip;
     CSR_MIE_Path mie;
     CSR_CAUSE_Path mcause;
@@ -153,6 +173,8 @@ typedef struct packed {
 `ifdef RSD_MARCH_FP_PIPE
     CSR_FCSR_Path fcsr;
 `endif
+
+    CSR_MSECCFG_Path mseccfg;
 } CSR_BodyPath;
 
 //
@@ -174,6 +196,8 @@ localparam CSR_NUM_MIE       = 12'h304; // Machine interrupt-enable register.
 localparam CSR_NUM_MTVEC     = 12'h305; // Machine trap-handler base address.
 localparam CSR_NUM_MCOUNTEREN = 12'h306; // Machine counter enable.
 
+localparam CSR_NUM_MSTATUSH  = 12'h310;
+
 //
 // Machine Trap Handling
 //
@@ -182,6 +206,9 @@ localparam CSR_NUM_MEPC      = 12'h341; // Machine exception program counter.
 localparam CSR_NUM_MCAUSE    = 12'h342; // Machine trap cause.
 localparam CSR_NUM_MTVAL     = 12'h343; // Machine bad address or instruction.
 localparam CSR_NUM_MIP       = 12'h344; // Machine interrupt pending.
+
+localparam CSR_NUM_MSECCFG   = 12'h747; // Machine security configuration register
+localparam CSR_NUM_MSECCFGH  = 12'h757; // Upper 32 bits of mseccfg, RV32 only
 
 //
 // Machine Protection and Translation

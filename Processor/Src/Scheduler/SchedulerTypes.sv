@@ -57,28 +57,30 @@ localparam ISSUE_QUEUE_RESET_CYCLE_BIT_SIZE
 
 
 // Information about the execution of an op.
-typedef enum logic [3:0] // ExecutionState
+typedef enum logic [4:0] // ExecutionState
 {
-    EXEC_STATE_NOT_FINISHED     = 4'b0000,
-    EXEC_STATE_SUCCESS          = 4'b0001, // Execution is successfully finished.
+    EXEC_STATE_NOT_FINISHED     = 5'b00000,
+    EXEC_STATE_SUCCESS          = 5'b00001, // Execution is successfully finished.
     
-    EXEC_STATE_REFETCH_THIS     = 4'b0010, // Execution is failed.
+    EXEC_STATE_REFETCH_THIS     = 5'b00010, // Execution is failed.
                                            // It must be refetch from this op. 
-    EXEC_STATE_REFETCH_NEXT     = 4'b0011, // Execution is successfully finished,
+    EXEC_STATE_REFETCH_NEXT     = 5'b00011, // Execution is successfully finished,
                                            // but it must be refetch from next op.
-    EXEC_STATE_TRAP_ECALL       = 4'b0100, // Execution causes a trap (ECALL)
-    EXEC_STATE_TRAP_EBREAK      = 4'b0101, // Execution causes a trap (EBREAK)
-    EXEC_STATE_TRAP_MRET        = 4'b0110,  // Execution causes a MRET
+    EXEC_STATE_TRAP_ECALL       = 5'b00100, // Execution causes a trap (ECALL)
+    EXEC_STATE_TRAP_EBREAK      = 5'b00101, // Execution causes a trap (EBREAK)
+    EXEC_STATE_TRAP_MRET        = 5'b00110,  // Execution causes a MRET
 
-    EXEC_STATE_FAULT_LOAD_MISALIGNED  = 4'b1000,  // Misaligned load is executed
-    EXEC_STATE_FAULT_LOAD_VIOLATION   = 4'b1001,  // Load access violation
-    EXEC_STATE_FAULT_STORE_MISALIGNED = 4'b1010,  // Misaligned store is executed
-    EXEC_STATE_FAULT_STORE_VIOLATION  = 4'b1011,  // Store access violation
-    EXEC_STATE_STORE_LOAD_FORWARDING_MISS  = 4'b1111,  // Store load forwarding miss
+    EXEC_STATE_FAULT_LOAD_MISALIGNED  = 5'b01000,  // Misaligned load is executed
+    EXEC_STATE_FAULT_LOAD_VIOLATION   = 5'b01001,  // Load access violation
+    EXEC_STATE_FAULT_STORE_MISALIGNED = 5'b01010,  // Misaligned store is executed
+    EXEC_STATE_FAULT_STORE_VIOLATION  = 5'b01011,  // Store access violation
+    EXEC_STATE_STORE_LOAD_FORWARDING_MISS  = 5'b01111,  // Store load forwarding miss
 
-    EXEC_STATE_FAULT_INSN_ILLEGAL     = 4'b1100,  // Illegal instruction
-    EXEC_STATE_FAULT_INSN_VIOLATION   = 4'b1101,  // Illegal instruction
-    EXEC_STATE_FAULT_INSN_MISALIGNED  = 4'b1110   // Misaligned instruction address
+    EXEC_STATE_FAULT_INSN_ILLEGAL     = 5'b01100,  // Illegal instruction
+    EXEC_STATE_FAULT_INSN_VIOLATION   = 5'b01101,  // Illegal instruction
+    EXEC_STATE_FAULT_INSN_MISALIGNED  = 5'b01110,  // Misaligned instruction address
+    
+    EXEC_STATE_FAULT_LPAD = 5'b10000 // LPAD fail
 } ExecutionState;
 localparam EXEC_STATE_BIT_WIDTH = $bits(ExecutionState);
 
@@ -123,6 +125,8 @@ typedef struct packed // ActiveListWriteData
     AddrPath            dataAddr;
     logic               isBranch;
     logic               isStore;
+    ELP_State_Type      elp;
+    ELP_State_Type      is_lp_expected;
 } ActiveListWriteData;
 
 
@@ -203,6 +207,8 @@ typedef struct packed // IntIssueQueueEntry
     OpSrc opSrc;
     OpDst opDst;
     PC_Path pc;
+    ELP_State_Type elp;
+    ELP_State_Type is_lp_expected;
 } IntIssueQueueEntry;
 
 
@@ -303,6 +309,8 @@ typedef struct packed // MemIssueQueueEntry
     OpSrc opSrc;
     OpDst opDst;
     PC_Path pc;
+
+    logic elp;
 } MemIssueQueueEntry;
 
 typedef struct packed // FPOpInfo

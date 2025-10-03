@@ -259,6 +259,7 @@ module MemoryTagAccessStage(
             ldNextStage[i].mshrID = ldRecordData[i].mshrID;
             ldNextStage[i].storeForwardMiss = storeForwardMiss[i];
 
+            ldNextStage[i].elp = ldIqData[i].elp;
 
             // ExecState
             // 命令の実行結果によって、再フェッチが必要かどうかなどを判定する
@@ -301,6 +302,7 @@ module MemoryTagAccessStage(
                 ENV_MRET:           ldNextStage[i].execState = EXEC_STATE_TRAP_MRET;
                 ENV_INSN_ILLEGAL:   ldNextStage[i].execState = EXEC_STATE_FAULT_INSN_ILLEGAL;
                 ENV_INSN_VIOLATION: ldNextStage[i].execState = EXEC_STATE_FAULT_INSN_VIOLATION;
+                ENV_LPAD_FAIL:      ldNextStage[i].execState = EXEC_STATE_FAULT_LPAD;
                 default:
                     ldNextStage[i].execState = EXEC_STATE_TRAP_EBREAK;
                 endcase
@@ -425,6 +427,8 @@ module MemoryTagAccessStage(
             stNextStage[i].hasAllocatedMSHR = FALSE;
             stNextStage[i].mshrID = 0;
             stNextStage[i].storeForwardMiss = storeForwardMiss[i];
+
+            stNextStage[i].elp = LP_NOT_EXPECTED;
 
             // ExecState
             // 命令の実行結果によって、再フェッチが必要かどうかなどを判定する

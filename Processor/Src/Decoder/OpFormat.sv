@@ -369,8 +369,9 @@ typedef enum logic [2:0]      // enum ENV_Code
     ENV_MRET            = 3'b010,    // MRET
     ENV_INSN_ILLEGAL    = 3'b011,    // Executes illegal insturction
     ENV_INSN_VIOLATION  = 3'b100,    // Insturction access violation
+    ENV_LPAD_FAIL       = 3'b101,    // Landing pad check fail
 
-    ENV_UNKNOWN         = 3'b101     //
+    ENV_UNKNOWN         = 3'b110     //
 } ENV_Code;
 
 // FPU code

@@ -158,6 +158,11 @@ function automatic void DecideCommit(
             recoveryPoint[i] = headOfThisInsn[i];
             opRefetchType[i] = REFETCH_TYPE_THIS_PC_TO_CSR_TARGET;
         end
+        else if (execState[i] == EXEC_STATE_FAULT_LPAD) begin
+            recovery[i] = TRUE;
+            recoveryPoint[i] = headOfThisInsn[i];
+            opRefetchType[i] = REFETCH_TYPE_THIS_PC_TO_CSR_TARGET;
+        end
         else begin
             // Set dummy values
             recovery[i] = FALSE;
@@ -201,7 +206,8 @@ function automatic void DecideCommit(
                             EXEC_STATE_FAULT_STORE_MISALIGNED,
                             EXEC_STATE_FAULT_STORE_VIOLATION,
                             EXEC_STATE_FAULT_INSN_ILLEGAL,
-                            EXEC_STATE_FAULT_INSN_VIOLATION
+                            EXEC_STATE_FAULT_INSN_VIOLATION,
+                            EXEC_STATE_FAULT_LPAD
                         }) || unableToStartRecovery) ? FALSE : TRUE);
                 end
                 else begin

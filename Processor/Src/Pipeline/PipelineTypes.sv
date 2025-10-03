@@ -117,6 +117,8 @@ typedef struct packed // RenameStageRegPath
     OpInfo   opInfo;    // Decoded micro op.
     PC_Path pc;
     BranchPred bPred;
+    ELP_State_Type elp;
+    ELP_State_Type is_lp_expected;
 } RenameStageRegPath;
 
 typedef struct packed // DispatchStageRegPath
@@ -130,6 +132,10 @@ typedef struct packed // DispatchStageRegPath
 
     PC_Path pc;        // Program counter
     BranchPred brPred;  // Branch prediction result.
+
+    // elp state
+    ELP_State_Type elp;
+    ELP_State_Type is_lp_expected;
 
     // Renamed physical register numbers.
     PRegNumPath phySrcRegNumA;
@@ -207,6 +213,8 @@ typedef struct packed // IntegerRegisterWriteStageRegPath
 
     logic brMissPred;
     BranchResult brResult;  // Result of branch
+
+    logic lplCheckFail; // Landing Pad Label check failed
 } IntegerRegisterWriteStageRegPath;
 
 //
@@ -315,7 +323,7 @@ typedef struct packed // MemoryTagAccessStageRegPath
     DataPath dataIn;        // The input data for store or CSR data out
     MemoryMapType memMapType;  // Memory map type: mem/io
     PhyAddrPath phyAddrOut;
-
+    
 } MemoryTagAccessStageRegPath;
 
 
@@ -353,6 +361,8 @@ typedef struct packed // MemoryAccessStageRegPath
     logic hasAllocatedMSHR; // This op allocated an MSHR entry or not
     MSHR_IndexPath mshrID;
     logic storeForwardMiss;      // Store-load forwarding miss occurs
+
+    ELP_State_Type elp;
 } MemoryAccessStageRegPath;
 
 
@@ -379,6 +389,8 @@ typedef struct packed // MemoryRegisterWriteStageRegPath
     logic hasAllocatedMSHR; // This op allocated an MSHR entry or not
     MSHR_IndexPath mshrID;
     logic storeForwardMiss;      // Store-load forwarding miss occurs
+
+    ELP_State_Type elp;
 } MemoryRegisterWriteStageRegPath;
 
 //

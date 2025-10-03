@@ -42,6 +42,12 @@ interface RecoveryManagerIF( input logic clk, rst );
     // For fault handling
     AddrPath faultingDataAddr;
 
+    // elp
+    ELP_State_Type elp_FromCommitStage;
+    ELP_State_Type is_lp_expected_FromCommitStage;
+    ELP_State_Type elp_FromRwStage;
+    ELP_State_Type is_lp_expected_FromRwStage;
+
     //　Miss prediction detected in RenameStage
     logic    recoverFromRename;
     AddrPath recoveredPC_FromRename;
@@ -113,6 +119,10 @@ interface RecoveryManagerIF( input logic clk, rst );
         recoveredPC_FromCommitStage,
         recoveredPC_FromRwStage,
         faultingDataAddr,
+        elp_FromCommitStage,
+        is_lp_expected_FromCommitStage,
+        elp_FromRwStage,
+        is_lp_expected_FromRwStage,
         notIssued,
         flushIQ_Entry,
         recoveryCauseFromCommitStage,
@@ -436,6 +446,10 @@ interface RecoveryManagerIF( input logic clk, rst );
         recoveredPC_FromCommitStage,
         recoveredPC_FromRwStage,
         faultingDataAddr,
+        elp_FromCommitStage,
+        is_lp_expected_FromCommitStage,
+        elp_FromRwStage,
+        is_lp_expected_FromRwStage,
         flushAllInsns
     );
 

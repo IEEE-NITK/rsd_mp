@@ -34,11 +34,13 @@ interface CSR_UnitIF(
     PC_Path excptCauseAddr;     // EBREAK/ECALL 時の mepc
     AddrPath excptTargetAddr;   // Trap vector or MRET return target
     AddrPath excptCauseDataAddr;     // fault 発生時のデータアドレス
+    ELP_State_Type excptELP;         // fault 発生時のELP
 
     // Interrupt
     logic triggerInterrupt;
     CSR_CAUSE_InterruptCodePath interruptCode;
     PC_Path interruptRetAddr;
+    ELP_State_Type interruptELP;
 
     // Timer interrupt request
     logic reqTimerInterrupt;
@@ -55,6 +57,14 @@ interface CSR_UnitIF(
     logic fflagsWE;
     FFlags_Path fflagsData;
 `endif
+
+    // landing pad enable
+    logic xLPE;
+
+    modport PreDecodeStage(
+    input
+        xLPE
+    );
 
     modport MemoryExecutionStage(
     input
@@ -107,7 +117,8 @@ interface CSR_UnitIF(
         triggerExcpt,
         excptCauseAddr,
         excptCause,
-        excptCauseDataAddr
+        excptCauseDataAddr,
+        excptELP
     );
 
     modport CSR_Unit(
@@ -121,6 +132,7 @@ interface CSR_UnitIF(
         excptCauseAddr,
         excptCause,
         excptCauseDataAddr,
+        excptELP,
         commitNum,
         reqTimerInterrupt,
         reqExternalInterrupt,
@@ -128,6 +140,7 @@ interface CSR_UnitIF(
         triggerInterrupt,
         interruptCode,
         interruptRetAddr,
+        interruptELP,
 `ifdef RSD_MARCH_FP_PIPE
         fflagsWE,
         fflagsData,
@@ -137,6 +150,7 @@ interface CSR_UnitIF(
         fflags,
         frm,
 `endif
+        xLPE,
         csrWholeOut,
         csrReadOut,
         excptTargetAddr,
@@ -151,7 +165,8 @@ interface CSR_UnitIF(
     output
         triggerInterrupt,
         interruptRetAddr,
-        interruptCode
+        interruptCode,
+        interruptELP
     );
 
 endinterface

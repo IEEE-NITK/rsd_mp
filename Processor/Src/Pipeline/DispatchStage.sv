@@ -119,6 +119,9 @@ module DispatchStage(
             // PC
             intEntry[i].pc = pipeReg[i].pc;
 
+            intEntry[i].elp             = pipeReg[i].elp;
+            intEntry[i].is_lp_expected  = pipeReg[i].is_lp_expected;
+
             intSubInfo[i].operandTypeA  = opInfo[i].opTypeA;
             intSubInfo[i].operandTypeB  = opInfo[i].opTypeB;
             intSubInfo[i].shiftIn       = opInfo[i].operand.intOp.shiftIn;
@@ -214,6 +217,9 @@ module DispatchStage(
 
             // PC
             memEntry[i].pc = pipeReg[i].pc;
+
+            // elp
+            memEntry[i].elp = pipeReg[i].elp;
 
 `ifdef RSD_MARCH_FP_PIPE
             //

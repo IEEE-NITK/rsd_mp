@@ -17,6 +17,7 @@ import ActiveListIndexTypes::*;
 
 module CSR_Unit(
     CSR_UnitIF.CSR_Unit port,
+    DecodeStageIF.CSR_Unit idStage,
     PerformanceCounterIF.CSR perfCounter
 );
 
@@ -50,6 +51,7 @@ module CSR_Unit(
         // Read a CSR value
         unique case (port.csrNumber) 
             CSR_NUM_MSTATUS:    rv = csrReg.mstatus;
+            CSR_NUM_MSTATUSH:   rv = csrReg.mstatush;
             CSR_NUM_MIP:        rv = csrReg.mip;
             CSR_NUM_MIE:        rv = csrReg.mie;
             CSR_NUM_MCAUSE:     rv = csrReg.mcause;
@@ -57,6 +59,7 @@ module CSR_Unit(
             CSR_NUM_MTVAL:      rv = csrReg.mtval;
             CSR_NUM_MEPC:       rv = csrReg.mepc;
             CSR_NUM_MSCRATCH:   rv = csrReg.mscratch;
+            CSR_NUM_MSECCFG:    rv = csrReg.mseccfg;
 
             CSR_NUM_MCYCLE:   rv = csrReg.mcycle;
             CSR_NUM_MINSTRET: rv = csrReg.minstret;
@@ -83,6 +86,8 @@ module CSR_Unit(
         csrNext.minstret = csrNext.minstret + regCommitNum;
 
         wv = '0;
+        idStage.recoverELP_FromCSR = FALSE;
+        idStage.recoveredELP_FromCSR = LP_NOT_EXPECTED;
 
         if (port.triggerInterrupt) begin
             // Interrupt
@@ -94,12 +99,20 @@ module CSR_Unit(
             csrNext.mcause.isInterrupt = TRUE;
             csrNext.mcause.code.interruptCode = port.interruptCode;
             //$display("int: from %x", port.interruptRetAddr);
+
+            csrNext.mstatush.MPELP = csrNext.mseccfg.MLPE ? port.interruptELP : LP_NOT_EXPECTED;
+            idStage.recoverELP_FromCSR = TRUE;
+            idStage.recoveredELP_FromCSR = LP_NOT_EXPECTED;
         end
         else if (port.triggerExcpt) begin
             if (port.excptCause == EXEC_STATE_TRAP_MRET) begin
                 // MRET
                 csrNext.mstatus.MIE = csrNext.mstatus.MPIE; // MIE の古い値に戻す
                 //$display("mret: to %x", csrNext.mepc);
+
+                csrNext.mstatush.MPELP = LP_NOT_EXPECTED;
+                idStage.recoverELP_FromCSR = TRUE;
+                idStage.recoveredELP_FromCSR = csrNext.mseccfg.MLPE ? csrNext.mstatush.MPELP : LP_NOT_EXPECTED;
             end
             else begin
                 // Trap
@@ -112,6 +125,9 @@ module CSR_Unit(
                 csrNext.mcause.code.trapCode = ToTrapCodeFromExecState(port.excptCause);
                 //$display("trap: from %x", csrNext.mepc);
 
+                csrNext.mstatush.MPELP = port.excptELP;
+                idStage.recoverELP_FromCSR = TRUE;
+                idStage.recoveredELP_FromCSR = LP_NOT_EXPECTED;
             end
         end
         else if (port.csrWE) begin
@@ -151,6 +167,8 @@ module CSR_Unit(
                 CSR_NUM_MEPC:       csrNext.mepc = {wv[31:1], 1'b0};
                 CSR_NUM_MSCRATCH:   csrNext.mscratch = wv;
 
+                CSR_NUM_MSECCFG:    csrNext.mseccfg.MLPE = wv.mseccfg.MLPE;
+
                 CSR_NUM_MCYCLE:     csrNext.mcycle = wv;
                 CSR_NUM_MINSTRET:   csrNext.minstret = wv;
 `ifdef RSD_MARCH_FP_PIPE
@@ -169,6 +187,8 @@ module CSR_Unit(
         port.fflags = csrReg.fcsr.fflags;
         port.frm = csrReg.fcsr.frm;
 `endif
+
+        port.xLPE = csrReg.mseccfg.MLPE;
 
         csrNext.mip.MTIP = port.reqTimerInterrupt;      // Timer interrupt request
         csrNext.mip.MEIP = port.reqExternalInterrupt;   // External interrupt request
@@ -197,7 +217,8 @@ module CSR_Unit(
             EXEC_STATE_FAULT_STORE_VIOLATION,
             EXEC_STATE_FAULT_INSN_ILLEGAL,
             EXEC_STATE_FAULT_INSN_VIOLATION,
-            EXEC_STATE_FAULT_INSN_MISALIGNED
+            EXEC_STATE_FAULT_INSN_MISALIGNED,
+            EXEC_STATE_FAULT_LPAD
         })),
         "Invalid exception cause is passed"
     );

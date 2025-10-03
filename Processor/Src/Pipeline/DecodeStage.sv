@@ -97,23 +97,42 @@ module DecodeStage(
         end
     end
 
+    ELP_State_Type last_ELP_State, prev_ELP_State;
+
+    always_ff@ (posedge port.clk)
+    begin
+        if (port.rst) begin
+            prev_ELP_State <= LP_NOT_EXPECTED;
+        end
+        else begin
+            if (port.recoverELP_FromRwStage || port.recoverELP_FromCSR) begin
+                prev_ELP_State <= port.recoverELP_FromRwStage ? port.recoveredELP_FromRwStage : port.recoveredELP_FromCSR;
+            end
+            else begin
+                if (complete) begin
+                    prev_ELP_State <= last_ELP_State;
+                end
+            end
+        end
+    end
+
+    always_comb begin
+        port.elpState = prev_ELP_State;
+    end
+
     // Pipeline control
     logic stall, clear;
     logic empty;
     RenameStageRegPath nextStage[DECODE_WIDTH];
     
     // Micro-op decoder
+    OpInfo [ALL_DECODED_MICRO_OP_WIDTH-1:0] originalMicroOps;
+    InsnInfo [DECODE_WIDTH-1:0] originalInsnInfo;
     OpInfo [ALL_DECODED_MICRO_OP_WIDTH-1:0] microOps;  // Decoded micro ops
     InsnInfo [DECODE_WIDTH-1:0] insnInfo;   // Whether a decoded instruction is branch or not.
-    
-    always_comb begin
-        for (int i = 0; i < DECODE_WIDTH; i++) begin
-            for (int j = 0; j < MICRO_OP_MAX_NUM; j++) begin
-                microOps[i*MICRO_OP_MAX_NUM + j] = pipeReg[i].microOps[j];
-            end
-            insnInfo[i] = pipeReg[i].insnInfo;
-        end
+    ELP_State_Type [ALL_DECODED_MICRO_OP_WIDTH-1:0] elps;
 
+    always_comb begin
         empty = TRUE;
         for (int i = 0; i < DECODE_WIDTH; i++) begin
             if (pipeReg[i].valid)
@@ -212,24 +231,84 @@ module DecodeStage(
     
 
     always_comb begin
+        for (int i = 0; i < DECODE_WIDTH; i++) begin
+            for (int j = 0; j < MICRO_OP_MAX_NUM; j++) begin
+                originalMicroOps[i*MICRO_OP_MAX_NUM + j] = pipeReg[i].microOps[j];
+            end
+            originalInsnInfo[i] = pipeReg[i].insnInfo;
+        end
         
         //
         // Setup current valid bits(=un-decoded bits).
         //
         if (initiate) begin
             for (int i = 0; i < ALL_DECODED_MICRO_OP_WIDTH; i++) begin
-                curValidMOps[i] = microOps[i].valid;
+                curValidMOps[i] = originalMicroOps[i].valid;
             end
         end
         else begin
             curValidMOps = remainingValidMOps;
         end
 
+        // replace originalMicroOps and originalInsnInfo
+        CheckLandingPad(
+            .insnValidIn(insnValidIn),
+            .microOps(originalMicroOps),
+            .insnInfo(originalInsnInfo),
+            .prev_ELP_State(prev_ELP_State),
+            .modifiedMicroOps(microOps),
+            .modifiedInsnInfo(insnInfo),
+            .last_ELP_State(last_ELP_State),
+            .elps(elps)
+        );
+
         // Set a "serialized" flag for each micro op.
         for (int i = 0; i < ALL_DECODED_MICRO_OP_WIDTH; i++) begin
             serializedMOps[i] = microOps[i].serialized;
         end
     end
+
+    function automatic void CheckLandingPad(
+        input logic insnValidIn[DECODE_WIDTH],
+        input OpInfo [ALL_DECODED_MICRO_OP_WIDTH-1:0] microOps,
+        input InsnInfo [DECODE_WIDTH-1:0] insnInfo,
+        input logic prev_ELP_State,
+        output OpInfo [ALL_DECODED_MICRO_OP_WIDTH-1:0] modifiedMicroOps,
+        output InsnInfo [DECODE_WIDTH-1:0] modifiedInsnInfo,
+        output ELP_State_Type [ALL_DECODED_MICRO_OP_WIDTH-1:0] elps,
+        output logic last_ELP_State
+    );
+        SystemMicroOpOperand systemOp;
+
+        for (int i = 0; i < DECODE_WIDTH; i++) begin
+            modifiedInsnInfo[i] = insnInfo[i];
+        end
+        for (int i = 0; i < ALL_DECODED_MICRO_OP_WIDTH; i++) begin
+            modifiedMicroOps[i] = microOps[i];
+        end
+
+        last_ELP_State = prev_ELP_State;
+
+        for (int i = 0; i < ALL_DECODED_MICRO_OP_WIDTH; i++) begin
+            elps[i] = last_ELP_State;
+            if (insnValidIn[ToInsnLane(i)] && microOps[i].valid) begin
+                if (last_ELP_State == LP_EXPECTED && !(microOps[i].mopType == MOP_TYPE_INT && microOps[i].mopSubType == INT_MOP_TYPE_LPL_CHECK)
+                    && !(microOps[i].mopType == MOP_TYPE_MEM && microOps[i].mopSubType == MEM_MOP_TYPE_ENV && microOps[i].operand.systemOp == ENV_INSN_VIOLATION)
+                ) begin
+                    // LPADのチェックに失敗したら、serializedなsystem命令に置き換えて後続をフラッシュする
+                    modifiedInsnInfo[ToInsnLane(i)].writePC = FALSE;
+                    modifiedInsnInfo[ToInsnLane(i)].isCall = FALSE;
+                    modifiedInsnInfo[ToInsnLane(i)].isReturn = FALSE;
+                    modifiedInsnInfo[ToInsnLane(i)].isRelBranch = FALSE;
+                    modifiedInsnInfo[ToInsnLane(i)].isSerialized = TRUE;
+
+                    RISCV_EmitFailedLandingPad(modifiedMicroOps[i]);
+                    modifiedMicroOps[i] = ModifyMicroOp(modifiedMicroOps[i], microOps[i].mid, microOps[i].split, microOps[i].last);
+                end
+                last_ELP_State = microOps[i].is_lp_expected;
+            end
+        end
+    endfunction
 
     MicroOpPicker picker(curValidMOps, serializedMOps, mopPicked, mopPickedIndex, pickedValidMOps);
 
@@ -271,6 +350,8 @@ module DecodeStage(
             nextStage[i].valid = insnValidOut[orgPickedInsnLane] && mopPicked[i] && !clear;
             nextStage[i].pc = pipeReg[orgPickedInsnLane].pc;
             nextStage[i].bPred = brPredOut[orgPickedInsnLane];  
+            nextStage[i].elp = elps[ mopPickedIndex[i] ];
+            nextStage[i].is_lp_expected = microOps[ mopPickedIndex[i] ].is_lp_expected;
 
 `ifndef RSD_DISABLE_DEBUG_REGISTER
             nextStage[i].opId.sid = pipeReg[orgPickedInsnLane].sid;
