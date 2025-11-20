@@ -84,6 +84,7 @@ module PreDecodeStage(
                 (stall || clear || port.rst) ? FALSE : pipeReg[i].valid;
             
             // Decoded micro-op and context.
+            nextStage[i].tid = pipeReg[i].tid;
             nextStage[i].insn = pipeReg[i].insn;
             nextStage[i].pc = pipeReg[i].pc;
             nextStage[i].brPred = pipeReg[i].brPred;

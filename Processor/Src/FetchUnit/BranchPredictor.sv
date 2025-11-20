@@ -5,6 +5,9 @@
 //
 // Branch predictor
 //
+// SMT Update: This wrapper passes the thread-aware interfaces (port, next, ctrl)
+// down to the specific predictor implementation.
+//
 
 import BasicTypes::*;
 import FetchUnitTypes::*;
@@ -18,8 +21,10 @@ module BranchPredictor(
 );
 
 `ifdef USE_GSHARE
+    // Gshare is now SMT-aware (duplicated history)
     Gshare predictor( port, next, ctrl );
 `else
+    // Bimodal is SMT-compatible (shared PHT tables)
     Bimodal predictor( port, next );
 `endif
 

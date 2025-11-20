@@ -14,14 +14,14 @@ import MemoryMapTypes::*;
 interface NextPCStageIF( input logic clk, rst, rstStart );
     
     // PC
-    logic    pcWE;
-    PC_Path  pcOut;
-    PC_Path  pcIn;
+    // SMT CHANGE: pcWE is now one bit per thread, pcOut is an array
+    logic        pcWE[NUM_THREADS]; 
+    PC_Path      pcOut[NUM_THREADS];
+    PC_Path      pcIn; // Shared input (arbitrated)
 
-    PC_Path  predNextPC;
+    PC_Path      predNextPC;
 
     // Executed branch results for updating a branch predictor.
-    // This signal is written back from a write back stage.
     BranchResult brResult[ INT_ISSUE_WIDTH ];
 
     // Interrupt
@@ -33,6 +33,7 @@ interface NextPCStageIF( input logic clk, rst, rstStart );
 
     // Pipeline register
     FetchStageRegPath nextStage[ FETCH_WIDTH ];
+    ThreadID selectedTid;
 
     modport PC(
     input
@@ -53,6 +54,7 @@ interface NextPCStageIF( input logic clk, rst, rstStart );
         pcWE,
         pcIn,
         predNextPC,
+        selectedTid,
         icNextReadAddrIn,
         nextStage
     );

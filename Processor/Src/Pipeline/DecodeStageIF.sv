@@ -3,7 +3,7 @@
 
 
 //
-// --- FetchPipe
+// --- DecodeStageIF
 //
 
 import BasicTypes::*;
@@ -14,8 +14,14 @@ interface DecodeStageIF( input logic clk, rst );
 
     // Pipeline registers 
     RenameStageRegPath nextStage[ DECODE_WIDTH ];
+    
+    // Flush control
     logic nextFlush;
     AddrPath nextRecoveredPC;
+    
+    // SMT CHANGE: We must identify WHICH thread triggered the flush
+    // so the RecoveryManager doesn't flush the wrong thread.
+    ThreadID nextFlushTid;
     
     modport ThisStage(
     input 
@@ -24,17 +30,16 @@ interface DecodeStageIF( input logic clk, rst );
     output 
         nextStage,
         nextFlush,
-        nextRecoveredPC
+        nextRecoveredPC,
+        nextFlushTid // Added
     );
     
     modport NextStage(
     input
         nextStage,
         nextFlush,
-        nextRecoveredPC
+        nextRecoveredPC,
+        nextFlushTid // Added
     );
     
 endinterface : DecodeStageIF
-
-
-

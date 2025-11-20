@@ -43,13 +43,17 @@ module ComplexIntegerIssueStage(
 
     always_comb begin
         for ( int i = 0; i < COMPLEX_ISSUE_WIDTH; i++) begin
-            if (recovery.toRecoveryPhase) begin
+            // SMT: Retrieve TID from Scheduler data
+            ThreadID currentOpTid;
+            currentOpTid = scheduler.complexIssuedData[i].tid;
+
+            if (recovery.toRecoveryPhase[currentOpTid]) begin // SMT Array Indexing
                 nextPipeReg[i].valid = pipeReg[i].valid &&
                                     !SelectiveFlushDetector(
-                                        recovery.toRecoveryPhase,
-                                        recovery.flushRangeHeadPtr,
-                                        recovery.flushRangeTailPtr,
-                                        recovery.flushAllInsns,
+                                        recovery.toRecoveryPhase[currentOpTid],
+                                        recovery.flushRangeHeadPtr[currentOpTid],
+                                        recovery.flushRangeTailPtr[currentOpTid],
+                                        recovery.flushAllInsns[currentOpTid],
                                         scheduler.complexIssuedData[i].activeListPtr
                                         );
             end
@@ -68,6 +72,7 @@ module ComplexIntegerIssueStage(
     ComplexIntegerRegisterReadStageRegPath nextStage [ COMPLEX_ISSUE_WIDTH ];
     ComplexIssueQueueEntry issuedData [ COMPLEX_ISSUE_WIDTH ];
     IssueQueueIndexPath issueQueuePtr [ COMPLEX_ISSUE_WIDTH ];
+    ThreadID opTid [ COMPLEX_ISSUE_WIDTH ];
 
     always_comb begin
 
@@ -86,14 +91,17 @@ module ComplexIntegerIssueStage(
                 issuedData[i] = scheduler.complexIssuedData[i];
                 valid[i] = !stall && pipeReg[i].valid;
             end
+            
+            opTid[i] = issuedData[i].tid; // Extract TID
 
             issueQueuePtr[i] = pipeReg[i].issueQueuePtr;
 
+            // SMT Flush Check
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         issuedData[i].activeListPtr
                         );
 
@@ -103,6 +111,7 @@ module ComplexIntegerIssueStage(
 
             `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
                 // Lock div units
+                // SMT Note: Divider is shared. First come first served or arbitrated in MulDivUnit.
                 mulDivUnit.divAcquire[i] = 
                     !clear && valid[i] &&
                     !flush[i] && issuedData[i].opType == COMPLEX_MOP_TYPE_DIV;
@@ -113,6 +122,10 @@ module ComplexIntegerIssueStage(
             // リセットorフラッシュ時はNOP
             nextStage[i].valid =
                 (clear || port.rst || flush[i]) ? FALSE : valid[i];
+            
+            // SMT: Pass TID
+            nextStage[i].tid = opTid[i];
+
             nextStage[i].complexQueueData = issuedData[i];
             nextStage[i].replay = scheduler.replay;
 `ifndef RSD_DISABLE_DEBUG_REGISTER

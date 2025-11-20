@@ -55,6 +55,7 @@ module FPRegisterWriteStage(
     logic update [ FP_ISSUE_WIDTH ];
     logic valid [ FP_ISSUE_WIDTH ];
     logic regValid [ FP_ISSUE_WIDTH ];
+    ThreadID opTid [ FP_ISSUE_WIDTH ];
 
     always_comb begin
 
@@ -65,13 +66,18 @@ module FPRegisterWriteStage(
         for ( int i = 0; i < FP_ISSUE_WIDTH; i++ ) begin
             iqData[i] = pipeReg[i].fpQueueData;
             regValid[i] = pipeReg[i].dataOut.valid;
+            
+            // SMT: Extract TID
+            opTid[i] = pipeReg[i].tid;
 
             valid[i] = pipeReg[i].valid;
+            
+            // SMT: Flush check with TID
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         iqData[i].activeListPtr
                         );
             update[i] = !stall && !clear && valid[i] && !flush[i];
@@ -93,6 +99,7 @@ module FPRegisterWriteStage(
             alWriteData[i].loadQueuePtr = iqData[i].loadQueueRecoveryPtr;
             alWriteData[i].storeQueuePtr = iqData[i].storeQueueRecoveryPtr;
             alWriteData[i].pc = iqData[i].pc;
+            alWriteData[i].tid = iqData[i].tid; // SMT: Pass TID to ActiveList logic
             alWriteData[i].dataAddr = '0;
             alWriteData[i].isBranch = FALSE;
             alWriteData[i].isStore = FALSE;

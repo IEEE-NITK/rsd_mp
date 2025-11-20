@@ -166,6 +166,7 @@ module Bimodal(
 
         for (int i = 0; i < FETCH_WIDTH; i++) begin
             // Read PHT entry for next cycle (use PC).
+            // SMT NOTE: PHT is shared; threads alias here. 
             phtRA[i] = ToPHT_Index_Local(pcIn + i*INSN_BYTE_WIDTH);
         end
 
@@ -202,5 +203,3 @@ module Bimodal(
 
 
 endmodule : Bimodal
-
-

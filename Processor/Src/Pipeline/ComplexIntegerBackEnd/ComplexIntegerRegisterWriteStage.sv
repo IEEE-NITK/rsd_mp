@@ -55,6 +55,7 @@ module ComplexIntegerRegisterWriteStage(
     logic update [ COMPLEX_ISSUE_WIDTH ];
     logic valid [ COMPLEX_ISSUE_WIDTH ];
     logic regValid [ COMPLEX_ISSUE_WIDTH ];
+    ThreadID opTid [ COMPLEX_ISSUE_WIDTH ];
 
     always_comb begin
 
@@ -65,13 +66,16 @@ module ComplexIntegerRegisterWriteStage(
         for ( int i = 0; i < COMPLEX_ISSUE_WIDTH; i++ ) begin
             iqData[i] = pipeReg[i].complexQueueData;
             regValid[i] = pipeReg[i].dataOut.valid;
+            opTid[i] = pipeReg[i].tid; // SMT: Extract TID
 
             valid[i] = pipeReg[i].valid;
+            
+            // SMT: Flush check with TID
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         iqData[i].activeListPtr
                         );
             update[i] = !stall && !clear && valid[i] && !flush[i];
@@ -91,9 +95,9 @@ module ComplexIntegerRegisterWriteStage(
             // Active list
             //
             alWriteData[i].ptr = iqData[i].activeListPtr;
+            alWriteData[i].tid = iqData[i].tid; // SMT: Pass TID
             alWriteData[i].loadQueuePtr = iqData[i].loadQueueRecoveryPtr;
             alWriteData[i].storeQueuePtr = iqData[i].storeQueueRecoveryPtr;
-            alWriteData[i].ptr = iqData[i].activeListPtr;
             alWriteData[i].pc = iqData[i].pc;
             alWriteData[i].dataAddr = '0;
             alWriteData[i].isBranch = FALSE;

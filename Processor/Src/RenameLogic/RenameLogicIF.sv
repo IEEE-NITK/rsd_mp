@@ -1,9 +1,8 @@
 // Copyright 2019- RSD contributors.
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 
-
 //
-// RenameLogic
+// RenameLogic Interface
 //
 
 import BasicTypes::*;
@@ -15,6 +14,7 @@ import ActiveListIndexTypes::*;
 interface RenameLogicIF( input logic clk, rst, rstStart );
 
     // Logical register numbers.
+    ThreadID tid [ RENAME_WIDTH ];
     LRegNumPath logSrcRegA [ RENAME_WIDTH ];
     LRegNumPath logSrcRegB [ RENAME_WIDTH ];
 `ifdef RSD_MARCH_FP_PIPE
@@ -47,12 +47,14 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
     // There are enough resources to rename.
     logic allocatable;
 
-    // RMT control signals, which are generated in RenameLogic.
+    // RMT control signals
     logic [ COMMIT_WIDTH-1:0 ] rmtWriteReg;
     PRegNumPath  rmtWriteReg_PhyRegNum[ COMMIT_WIDTH ];
     LRegNumPath  rmtWriteReg_LogRegNum[ COMMIT_WIDTH ];
+    // SMT FIX: Added this signal so RMT.sv can compile
+    ThreadID     rmtWriteReg_Tid[ COMMIT_WIDTH ]; 
 
-    // Retirement RMT control signals, which are generated in CommitStage.
+    // Retirement RMT control signals
     logic [COMMIT_WIDTH-1:0] retRMT_WriteReg;
     PRegNumPath retRMT_WriteReg_PhyRegNum[COMMIT_WIDTH];
     LRegNumPath retRMT_WriteReg_LogRegNum[COMMIT_WIDTH];
@@ -60,7 +62,7 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
     PRegNumPath retRMT_ReadReg_PhyRegNum[RENAME_WIDTH];
     LRegNumPath retRMT_ReadReg_LogRegNum[RENAME_WIDTH];
 
-    // WAT control signals, which are generated in RenameLogic.
+    // WAT control signals
     logic [RENAME_WIDTH-1 : 0] watWriteRegFromPipeReg;
     IssueQueueIndexPath  watWriteIssueQueuePtrFromPipeReg[ RENAME_WIDTH ];
     IssueQueueIndexPath srcIssueQueuePtrRegA[ RENAME_WIDTH ];
@@ -93,6 +95,7 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         releaseReg,
         phyReleasedReg,
         retRMT_ReadReg_PhyRegNum,
+        tid,
         logDstReg,
         watWriteRegFromPipeReg,
         watWriteIssueQueuePtrFromPipeReg,
@@ -103,6 +106,7 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         rmtWriteReg,
         rmtWriteReg_PhyRegNum,
         rmtWriteReg_LogRegNum,
+        rmtWriteReg_Tid, // Added to output
         watWriteReg,
         watWriteLogRegNum,
         watWriteIssueQueuePtr
@@ -125,6 +129,7 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         allocatable,
         prevDependIssueQueuePtr,
     output
+        tid,
         logSrcRegA,
         logSrcRegB,
 `ifdef RSD_MARCH_FP_PIPE
@@ -188,9 +193,11 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         rmtWriteReg,
         rmtWriteReg_PhyRegNum,
         rmtWriteReg_LogRegNum,
+        rmtWriteReg_Tid, // Added to input
         watWriteReg,
         watWriteLogRegNum,
         watWriteIssueQueuePtr,
+        tid,
         logSrcRegA,
         logSrcRegB,
 `ifdef RSD_MARCH_FP_PIPE
@@ -213,5 +220,3 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
     );
 
 endinterface : RenameLogicIF
-
-

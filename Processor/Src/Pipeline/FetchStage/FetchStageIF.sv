@@ -36,6 +36,7 @@ interface FetchStageIF( input logic clk, rst, rstStart );
 
     // Pipeline register
     PreDecodeStageRegPath nextStage[ FETCH_WIDTH ];
+    ThreadID fetchThreadId[ FETCH_WIDTH ];
 
     modport ThisStage(
     input
@@ -52,6 +53,7 @@ interface FetchStageIF( input logic clk, rst, rstStart );
         fetchStagePC,
         updateBrHistory,
         nextStage,
+        fetchThreadId,
         icRE,
         icReadAddrIn
     );

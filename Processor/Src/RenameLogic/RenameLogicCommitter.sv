@@ -4,6 +4,7 @@
 
 //
 // Commit/recovery logic related to a rename logic.
+// SMT Update: Now instantiated per thread, indexed via Parameter.
 //
 
 `include "BasicMacros.sv"
@@ -14,7 +15,9 @@ import SchedulerTypes::*;
 import ActiveListIndexTypes::*;
 
 
-module RenameLogicCommitter(
+module RenameLogicCommitter #(
+    parameter integer TID = 0 // SMT: Thread ID for this instance
+)(
     RenameLogicIF.RenameLogicCommitter port,
     ActiveListIF.RenameLogicCommitter activeList,
     RecoveryManagerIF.RenameLogicCommitter recovery
@@ -37,7 +40,8 @@ module RenameLogicCommitter(
         recoveryCount <= nextRecoveryCount;
     end
 
-    `RSD_ASSERT_CLK(port.clk, !(recovery.toRecoveryPhase && phase != PHASE_COMMIT), "");
+    // SMT: Index into recovery interface array
+    `RSD_ASSERT_CLK(port.clk, !(recovery.toRecoveryPhase[TID] && phase != PHASE_COMMIT), "");
 
     // State machine
     always_comb begin
@@ -46,7 +50,7 @@ module RenameLogicCommitter(
             nextPhase = PHASE_COMMIT;
             nextRecoveryCount = 0;
         end
-        else if (recovery.toRecoveryPhase) begin
+        else if (recovery.toRecoveryPhase[TID]) begin // SMT Indexing
             // Trigger a recovery mode.
             nextPhase = PHASE_RECOVER_0;
             nextRecoveryCount = 0;
@@ -54,7 +58,7 @@ module RenameLogicCommitter(
         else if(phase == PHASE_RECOVER_0) begin
             // In the first step of recovery, count the number of ops in the active list.
             nextPhase = PHASE_RECOVER_1;
-            nextRecoveryCount = activeList.recoveryEntryNum;
+            nextRecoveryCount = activeList.recoveryEntryNum[TID]; // SMT Indexing
         end
         else if(phase == PHASE_RECOVER_1) begin
             // Release all entries in a mispredicted path, move to a normal phase.
@@ -105,7 +109,10 @@ module RenameLogicCommitter(
     always_comb begin
 
         // The head and tail entries of an active list.
-        alReadData = activeList.readData;
+        // SMT: RenameLogic must ensure port.readData is wired correctly 
+        // (RenameLogic.sv handles the wiring from ActiveList to this port)
+        alReadData = port.readData; 
+        
         releaseNum = '0;
         flushNum = '0;
 
@@ -113,15 +120,15 @@ module RenameLogicCommitter(
         //  a rename logic.
         if(phase == PHASE_COMMIT) begin
             // Commit mode.
-            activeList.popTailNum = 0;
+            activeList.popTailNum[TID] = 0; // SMT Indexing
 
             // Pop the head entries of the active list and release registers
             // to the free lists in the rename logic.
             if ( port.commit ) begin
-                activeList.popHeadNum = port.commitNum;
+                activeList.popHeadNum[TID] = port.commitNum; // SMT Indexing
             end
             else begin
-                activeList.popHeadNum = 0;
+                activeList.popHeadNum[TID] = 0; // SMT Indexing
             end
 
             for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
@@ -140,17 +147,18 @@ module RenameLogicCommitter(
                 nextReleasedReg[i].phyReleasedReg = alReadData[i].phyPrevDstRegNum;
             end
 
-            recovery.inRecoveryAL = FALSE;
+            // SMT: Indexing recovery interface
+            recovery.inRecoveryAL[TID] = FALSE;
             flushNum = '0;
         end
         else if(phase == PHASE_RECOVER_0) begin
-            activeList.popHeadNum = 0;
-            activeList.popTailNum = 0;
+            activeList.popHeadNum[TID] = 0;
+            activeList.popTailNum[TID] = 0;
             for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
                 nextReleasedReg[i].releaseReg = FALSE;
                 nextReleasedReg[i].phyReleasedReg = 0;
             end
-            recovery.inRecoveryAL = TRUE;
+            recovery.inRecoveryAL[TID] = TRUE;
             flushNum = '0;
         end
         else begin
@@ -161,8 +169,8 @@ module RenameLogicCommitter(
                     releaseNum = recoveryCount;
                 end
                 flushNum = releaseNum;
-                activeList.popHeadNum = releaseNum;
-                activeList.popTailNum = 0;
+                activeList.popHeadNum[TID] = releaseNum;
+                activeList.popTailNum[TID] = 0;
 
                 for (int i = 0; i < COMMIT_WIDTH; i++) begin
                     if (i < releaseNum) begin
@@ -180,15 +188,15 @@ module RenameLogicCommitter(
                     nextReleasedReg[i].phyReleasedReg = alReadData[i].phyDstRegNum;
                 end
 
-                recovery.inRecoveryAL = TRUE;
+                recovery.inRecoveryAL[TID] = TRUE;
             end else begin
                 releaseNum = COMMIT_WIDTH;
                 if (releaseNum > recoveryCount) begin
                     releaseNum = recoveryCount;
                 end
                 flushNum = releaseNum;
-                activeList.popHeadNum = 0;
-                activeList.popTailNum = releaseNum;
+                activeList.popHeadNum[TID] = 0;
+                activeList.popTailNum[TID] = releaseNum;
 
                 for (int i = 0; i < COMMIT_WIDTH; i++) begin
                     if ( (i < releaseNum)) begin
@@ -206,13 +214,11 @@ module RenameLogicCommitter(
                     nextReleasedReg[i].phyReleasedReg = alReadData[i].phyDstRegNum;
                 end
 
-                recovery.inRecoveryAL = TRUE;
+                recovery.inRecoveryAL[TID] = TRUE;
             end
         end
 
         port.flushNum = flushNum;
     end
-
-
 
 endmodule

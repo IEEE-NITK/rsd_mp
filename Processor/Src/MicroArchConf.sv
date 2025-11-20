@@ -4,6 +4,10 @@
 
 package MicroArchConf;
 
+// ---- Thread Configuration
+// Number of threads for SMT support
+localparam CONF_THREAD_NUM = 2;
+
 // ---- Front-end
 // Fetch width (instructions). This parameter is configurable.
 localparam CONF_FETCH_WIDTH = 2;
@@ -23,17 +27,18 @@ localparam CONF_COMMIT_WIDTH = 2;
 // --- Back-end
 // The number of physical registers
 // INT and FP must be the same at present.
-localparam CONF_PSCALAR_NUM = 64;
-localparam CONF_PSCALAR_FP_NUM = 64;
+// increase num of phy reg for smt prevent deadlock in issue 
+localparam CONF_PSCALAR_NUM = 128;
+localparam CONF_PSCALAR_FP_NUM = 128;
 
 // The number of issue-queue entries
-localparam CONF_ISSUE_QUEUE_ENTRY_NUM = 16;
+localparam CONF_ISSUE_QUEUE_ENTRY_NUM = 32;
 
 // The number of active-list (ROB: reorder buffer) entries
-localparam CONF_ACTIVE_LIST_ENTRY_NUM = 64;
+localparam CONF_ACTIVE_LIST_ENTRY_NUM = 128;
 
-// The number of replay-queue entries
-localparam CONF_REPLAY_QUEUE_ENTRY_NUM = 20;
+// The number of replay-queue entries worst case too many flushes may cause deadlock
+localparam CONF_REPLAY_QUEUE_ENTRY_NUM = 40;
 
 // The following macros can be defined from outside this file.
 //  (e.g., CoreSources.mk or SynthesisMacros.sv)
@@ -78,8 +83,8 @@ localparam CONF_STORE_ISSUE_WIDTH = 1;      // must be 1
 
 // --- Load store unit
 // These parameters must be a power of two.
-localparam CONF_LOAD_QUEUE_ENTRY_NUM = 16;  // The size of a load queue
-localparam CONF_STORE_QUEUE_ENTRY_NUM = 16; // The size of a store queue
+localparam CONF_LOAD_QUEUE_ENTRY_NUM = 32;  // The size of a load queue
+localparam CONF_STORE_QUEUE_ENTRY_NUM = 32; // The size of a store queue
 
 // --- Predictors
 // Branch predictor

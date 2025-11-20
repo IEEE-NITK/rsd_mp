@@ -134,6 +134,7 @@ package CacheSystemTypes;
     typedef struct packed   // MissStatusHandlingRegister;
     {
         logic valid;
+        ThreadID tid;
 
         MSHR_Phase phase;
 
@@ -321,12 +322,14 @@ package CacheSystemTypes;
     typedef struct packed {
         logic valid;
         PhyAddrPath addr;
+        ThreadID tid;
     } MemReadAccessReq;
 
     typedef struct packed {
         logic valid;
         MemAccessSerial serial;
         DCacheLinePath data;
+        ThreadID tid;
     } MemAccessResult;
 
     typedef struct packed {

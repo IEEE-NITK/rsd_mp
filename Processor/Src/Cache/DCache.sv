@@ -1132,6 +1132,7 @@ module DCache(
         // Miss handler
     logic portInitMSHR[MSHR_NUM];
     PhyAddrPath portInitMSHR_Addr[MSHR_NUM];
+    ThreadID portInitMSHR_Tid[MSHR_NUM];
     ActiveListIndexPath portInitMSHR_ActiveListPtr[MSHR_NUM];
     logic portIsAllocatedByStore[MSHR_NUM];
     logic portIsUncachable[MSHR_NUM];
@@ -1177,6 +1178,7 @@ module DCache(
         for (int i = 0; i < MSHR_NUM; i++) begin
             portInitMSHR[i] = FALSE;
             portInitMSHR_Addr[i] = '0;
+            portInitMSHR_Tid[i] = '0;
             portInitMSHR_ActiveListPtr[i] = '0;
             portIsAllocatedByStore[i] = FALSE;
             portIsUncachable[i] = FALSE;
@@ -1197,10 +1199,12 @@ module DCache(
                     portInitMSHR_ActiveListPtr[m] = missActiveListPtr[i]; 
                     portIsUncachable[m] = missIsUncachable[i];
                     if (i < DCACHE_LSU_READ_PORT_NUM) begin
+                        portInitMSHR_Tid[m] = lsu.dcReadTid[i];
                         lsuLoadHasAllocatedMSHR[i] = TRUE;
                         lsuLoadMSHRID[i] = m;
                     end
                     else begin
+                        portInitMSHR_Tid[m] = lsu.dcWriteTid;
                         lsuStoreHasAllocatedMSHR[i-DCACHE_LSU_READ_PORT_NUM] = TRUE;
                         lsuStoreMSHRID[i-DCACHE_LSU_READ_PORT_NUM] = m;
                         portIsAllocatedByStore[m] = TRUE;
@@ -1213,6 +1217,7 @@ module DCache(
         for (int i = 0; i < MSHR_NUM; i++) begin
             port.initMSHR[i] = portInitMSHR[i];
             port.initMSHR_Addr[i] = portInitMSHR_Addr[i];
+            port.initMSHR_Tid[i] = portInitMSHR_Tid[i];
             port.initMSHR_ActiveListPtr[i] = portInitMSHR_ActiveListPtr[i];
             port.isAllocatedByStore[i] = portIsAllocatedByStore[i];
             port.isUncachable[i] = portIsUncachable[i];
@@ -1448,6 +1453,7 @@ module DCacheMissHandler(
                         // Initial phase
 
                         nextMSHR[i].valid = TRUE;
+                        nextMSHR[i].tid = port.initMSHR_Tid[i];
                         nextMSHR[i].newAddr = port.initMSHR_Addr[i];
                         nextMSHR[i].newValid = FALSE;
                         nextMSHR[i].victimValid = FALSE;
@@ -1483,6 +1489,7 @@ module DCacheMissHandler(
                     else if (port.dcFlushing && (i == 0)) begin
                         // MSHR[0] is used to flush DCache.
                         nextMSHR[i].valid = TRUE;
+                        nextMSHR[i].tid = port.dcFlushTid;
                         nextMSHR[i].newAddr = '0;
                         nextMSHR[i].newValid = FALSE;
                         nextMSHR[i].victimValid = FALSE;

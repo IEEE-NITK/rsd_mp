@@ -45,7 +45,14 @@ module Gshare(
     PHT_EntryPath phtRV[FETCH_WIDTH];
 
     // Branch history for using predict.
-    BranchGlobalHistoryPath nextBrGlobalHistory, regBrGlobalHistory;
+    // SMT CHANGE: Global history must be duplicated per thread.
+    BranchGlobalHistoryPath regBrGlobalHistory[NUM_THREADS];
+    BranchGlobalHistoryPath nextBrGlobalHistory[NUM_THREADS];
+    
+    // Temp variables to hold the history of the *current* fetch thread
+    BranchGlobalHistoryPath currentThreadHistory; 
+    BranchGlobalHistoryPath nextCurrentThreadHistory;
+
     BranchGlobalHistoryPath brGlobalHistory [ FETCH_WIDTH ];
 
     // assert when misprediction occured.
@@ -108,9 +115,12 @@ module Gshare(
     always_ff @(posedge port.clk) begin
         // update Branch Global History.
         if (port.rst) begin
-            regBrGlobalHistory <= '0;
+            for (int i=0; i < NUM_THREADS; i++) begin
+                regBrGlobalHistory[i] <= '0;
+            end
         end
         else begin
+            // SMT CHANGE: Update history for all threads (logic determines which one changed)
             regBrGlobalHistory <= nextBrGlobalHistory;
         end
 
@@ -133,12 +143,19 @@ module Gshare(
     
         pcIn = port.predNextPC;
 
-        nextBrGlobalHistory = regBrGlobalHistory;
+        // SMT CHANGE: Default behavior is to keep history same for all threads
+        for (int i=0; i < NUM_THREADS; i++) begin
+            nextBrGlobalHistory[i] = regBrGlobalHistory[i];
+        end
+        
+        // SMT CHANGE: Select the history of the thread currently being fetched
+        currentThreadHistory = regBrGlobalHistory[port.fetchThreadID];
+        nextCurrentThreadHistory = currentThreadHistory;
 
         for (int i = 0; i < FETCH_WIDTH; i++) begin
             brPredTaken[i] = FALSE;
             // Output global history to pipeline for recovery.
-            brGlobalHistory[i] = regBrGlobalHistory;
+            brGlobalHistory[i] = currentThreadHistory;
             updateHistory[i] = FALSE;
         end
 
@@ -154,8 +171,8 @@ module Gshare(
             // Generate next brGlobalHistory.
             if (updateHistory[i]) begin
                 // Shift history 1 bit to the left and reflect prediction direction in LSB.
-                nextBrGlobalHistory = 
-                    (nextBrGlobalHistory << 1) | brPredTaken[i];
+                nextCurrentThreadHistory = 
+                    (nextCurrentThreadHistory << 1) | brPredTaken[i];
                 
                 if (brPredTaken[i]) begin
                     // If brPred is taken, next instruction don't be executed.
@@ -164,6 +181,9 @@ module Gshare(
             end
         end
         
+        // SMT CHANGE: Write back the modified history to the array for the current thread
+        nextBrGlobalHistory[port.fetchThreadID] = nextCurrentThreadHistory;
+
         next.phtPrevValue = phtRV;
         next.brPredTaken = brPredTaken;
         next.brGlobalHistory = brGlobalHistory;
@@ -207,21 +227,23 @@ module Gshare(
 
             // When miss prediction is occured, recovory history.
             if (mispred) begin
+                // SMT CHANGE: Restore history for the SPECIFIC thread that mispredicted
                 if (port.brResult[i].isCondBr) begin
-                    nextBrGlobalHistory = 
+                    nextBrGlobalHistory[port.brResult[i].tid] = 
                         (port.brResult[i].globalHistory << 1) | port.brResult[i].execTaken;
                 end
                 else begin
-                    nextBrGlobalHistory = port.brResult[i].globalHistory;
+                    nextBrGlobalHistory[port.brResult[i].tid] = port.brResult[i].globalHistory;
                 end
             end
         end
 
         for (int i = 0; i < FETCH_WIDTH; i++) begin
             // Read PHT entry for next cycle (use PC ^ brGlobalHistory).
+            // SMT CHANGE: XOR using the *next* history of the *current* fetch thread.
             phtRA[i] = ToPHT_Index_Global(
                 pcIn + i*INSN_BYTE_WIDTH,
-                nextBrGlobalHistory
+                nextCurrentThreadHistory
             );
         end
 

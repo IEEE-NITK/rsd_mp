@@ -11,12 +11,18 @@ package RenameLogicTypes;
 import MicroOpTypes::*;
 import BasicTypes::*;
 import LoadStoreUnitTypes::*;
+// SMT UPDATE: Added imports for ActiveList structures
+import MicroArchConf::*;
+import ActiveListIndexTypes::*;
+import SchedulerTypes::*;
 
 //
 // --- RMT
 //
 
 // RMTはint/fpで共通
+// SMT Note This is the Logical Register count *per thread*.
+// The hardware instantiation (RMT.sv) handles the banking (LREG_NUM * NUM_THREADS).
 localparam RMT_ENTRY_NUM = LREG_NUM;
 localparam RMT_INDEX_BIT_SIZE = LREG_NUM_BIT_WIDTH;
 
@@ -67,5 +73,51 @@ typedef logic [SCALAR_FP_FREE_LIST_ENTRY_NUM_BIT_WIDTH:0] ScalarFPFreeListCountP
 //
 localparam RECOVERY_FROM_RRMT = FALSE;
 localparam RECOVERY_FROM_ACTIVE_LIST = TRUE;
+
+//
+// --- Active List (Reorder Buffer) Types
+// SMT UPDATE: Added definition here to support TID tracking
+//
+
+// ActiveListEntry
+typedef struct packed
+{
+`ifndef RSD_DISABLE_DEBUG_REGISTER
+    OpId    opId;
+`endif
+    // SMT CHANGE: We must track which thread owns this entry for flushing/commit.
+    ThreadID tid;
+
+    PC_Path pc;             // PC of this op.
+    PRegNumPath phyDstRegNum;     // Physical destination register number.
+    PRegNumPath phyPrevDstRegNum; // Previous physical destination register number.
+    LRegNumPath logDstRegNum;     // Logical destination register number.
+    logic writeReg;         // Whether this op writes a register.
+    logic isLoad;           // Whether this op is a load.
+    logic isStore;          // Whether this op is a store.
+    logic isBranch;         // Whether this op is a branch.
+    logic isEnv;            // Whether this op is an env (System call/Trap).
+    logic undefined;        // Whether this op is undefined.
+    logic last;             // This op is the last micro-op of a instruction.
+    
+    // For recovering WAT
+    IssueQueueIndexPath prevDependIssueQueuePtr;
+} ActiveListEntry;
+
+// Write data from back-end execution stages
+typedef struct packed
+{
+    ActiveListIndexPath ptr;
+    
+    // Used for recovery
+    PC_Path pc; 
+    LoadQueueIndexPath loadQueuePtr;
+    StoreQueueIndexPath storeQueuePtr;
+    AddrPath dataAddr;  // Access address for fault checking.
+
+    ExecutionState state;
+    logic isBranch;
+    logic isStore;
+} ActiveListWriteData;
 
 endpackage

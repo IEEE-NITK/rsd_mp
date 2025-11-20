@@ -84,6 +84,7 @@ module MemoryRegisterReadStage(
     MemOpInfo memOpInfo[MEM_ISSUE_WIDTH];
     OpSrc opSrc[MEM_ISSUE_WIDTH];
     OpDst opDst[MEM_ISSUE_WIDTH];
+    ThreadID opTid [ MEM_ISSUE_WIDTH ];
     MemoryExecutionStageRegPath nextStage [MEM_ISSUE_WIDTH];
     MSHR_IndexPath mshrID;
 
@@ -97,6 +98,7 @@ module MemoryRegisterReadStage(
             opSrc[i] = iqData[i].opSrc;
             opDst[i] = iqData[i].opDst;
             pc[i] = iqData[i].pc;
+            opTid[i] = pipeReg[i].tid;
 
             //
             // Register file
@@ -108,8 +110,6 @@ module MemoryRegisterReadStage(
 
             //
             // To a bypass network.
-            // ストールやフラッシュの制御は，Bypass モジュールの内部で
-            // コントローラの信号を参照して行われている
             //
             bypass.memPhySrcRegNumA[i] = opSrc[i].phySrcRegNumA;
             bypass.memPhySrcRegNumB[i] = opSrc[i].phySrcRegNumB;
@@ -122,7 +122,7 @@ module MemoryRegisterReadStage(
             //
             // --- オペランド選択
             //
-            immOut[i] = '0; //RISCVにおいて即値をオペランドにとるようなロード/ストアはない(アドレス計算はExecutionStage)
+            immOut[i] = '0; 
             operandA[i].data = SelectOperand(
                 memOpInfo[i].operandTypeA,
                 registerFile.memSrcRegDataA[i].data,
@@ -148,15 +148,16 @@ module MemoryRegisterReadStage(
 
             // リセットorフラッシュ時はNOP
             flush[i] = SelectiveFlushDetector(
-                recovery.toRecoveryPhase,
-                recovery.flushRangeHeadPtr,
-                recovery.flushRangeTailPtr,
-                recovery.flushAllInsns,
+                recovery.toRecoveryPhase[opTid[i]],
+                recovery.flushRangeHeadPtr[opTid[i]],
+                recovery.flushRangeTailPtr[opTid[i]],
+                recovery.flushAllInsns[opTid[i]],
                 iqData[i].activeListPtr
             );
             nextStage[i].valid =
                 (stall || clear || port.rst || flush[i]) ? FALSE : pipeReg[i].valid;
 
+            nextStage[i].tid = opTid[i];
             nextStage[i].memQueueData = pipeReg[i].memQueueData;
 
             // レジスタ値&フラグ

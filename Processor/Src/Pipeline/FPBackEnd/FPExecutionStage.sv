@@ -53,6 +53,7 @@ module FPExecutionStage(
         logic valid;  // Valid flag. If this is 0, its op is treated as NOP.
         logic regValid; // Valid flag of a destination register.
         FPIssueQueueEntry fpQueueData;
+        ThreadID tid; // SMT: Propagate TID
     } LocalPipeReg;
 
     LocalPipeReg localPipeReg [ FP_ISSUE_WIDTH ][ FP_EXEC_STAGE_DEPTH-1 ];
@@ -121,6 +122,7 @@ module FPExecutionStage(
     Rounding_Mode rm [FP_ISSUE_WIDTH];
     Rounding_Mode stRM [FP_ISSUE_WIDTH];
     Rounding_Mode dynRM [FP_ISSUE_WIDTH];
+    ThreadID     opTid [ FP_ISSUE_WIDTH ];
 
     PRegDataPath  fuOpA    [ FP_ISSUE_WIDTH ];
     PRegDataPath  fuOpB    [ FP_ISSUE_WIDTH ];
@@ -238,7 +240,15 @@ module FPExecutionStage(
             opType[i]    = fpOpInfo[i].opType;
             fpuCode[i]   = fpOpInfo[i].fpuCode;
             stRM[i]      = fpOpInfo[i].rm;
-            dynRM[i]     = csrUnit.frm;
+            
+            // SMT: Retrieve TID
+            opTid[i] = pipeReg[i].tid;
+            
+            // SMT: CSR read needs to be thread-specific
+            // Assuming csrUnit interface provides array access or we select based on TID
+            // Simplified: Using array access csrUnit.frm[tid]
+            dynRM[i]     = csrUnit.frm[opTid[i]]; 
+            
             if (stRM[i] == RM_DYN) begin
                 rm[i] = dynRM[i];
             end
@@ -248,21 +258,24 @@ module FPExecutionStage(
             
 
             flush[i][0] = SelectiveFlushDetector(
-                recovery.toRecoveryPhase,
-                recovery.flushRangeHeadPtr,
-                recovery.flushRangeTailPtr,
-                recovery.flushAllInsns, 
+                recovery.toRecoveryPhase[opTid[i]],
+                recovery.flushRangeHeadPtr[opTid[i]],
+                recovery.flushRangeTailPtr[opTid[i]],
+                recovery.flushAllInsns[opTid[i]], 
                 pipeReg[i].fpQueueData.activeListPtr
             );
 
             // From local pipeline 
             for (int j = 1; j < FP_EXEC_STAGE_DEPTH; j++) begin 
-                iqData[i][j] = localPipeReg[i][j-1].fpQueueData; 
+                iqData[i][j] = localPipeReg[i][j-1].fpQueueData;
+                // SMT: Check TID of op in local pipeline 
+                ThreadID stageTid = localPipeReg[i][j-1].tid;
+                
                 flush[i][j] = SelectiveFlushDetector( 
-                    recovery.toRecoveryPhase, 
-                    recovery.flushRangeHeadPtr, 
-                    recovery.flushRangeTailPtr, 
-                    recovery.flushAllInsns, 
+                    recovery.toRecoveryPhase[stageTid], 
+                    recovery.flushRangeHeadPtr[stageTid], 
+                    recovery.flushRangeTailPtr[stageTid], 
+                    recovery.flushAllInsns[stageTid], 
                     localPipeReg[i][j-1].fpQueueData.activeListPtr 
                 );
             end
@@ -271,7 +284,7 @@ module FPExecutionStage(
             fuOpA[i] = ( pipeReg[i].bCtrl.rA.valid ? bypass.fpSrcRegDataOutA[i] : pipeReg[i].operandA );
             fuOpB[i] = ( pipeReg[i].bCtrl.rB.valid ? bypass.fpSrcRegDataOutB[i] : pipeReg[i].operandB );
             fuOpC[i] = ( pipeReg[i].bCtrl.rC.valid ? bypass.fpSrcRegDataOutC[i] : pipeReg[i].operandC );
-           
+            
 
             
             //
@@ -324,10 +337,13 @@ module FPExecutionStage(
 
             // ISから3ステージ後=EX1ステージでReplayを出力
             // このとき、localPipeReg[lane][0]のデータを使う
+            // SMT: Flush check uses TID from localPipeReg
+            ThreadID replayTid = localPipeReg[i][0].tid;
+            
             scheduler.fpRecordEntry[i] =
                 !stall &&
                 !clear &&
-                !flush[i][1] &&
+                !flush[i][1] && // Index 1 corresponds to EX1 stage logic
                 localPipeReg[i][0].valid &&
                 !localPipeReg[i][0].regValid;
             scheduler.fpRecordData[i] =
@@ -349,6 +365,7 @@ module FPExecutionStage(
 
             nextLocalPipeReg[i][0].valid = flush[i][0] ? FALSE : pipeReg[i].valid;
             nextLocalPipeReg[i][0].fpQueueData = pipeReg[i].fpQueueData;
+            nextLocalPipeReg[i][0].tid = opTid[i]; // SMT: Pass TID
 
             // Reg valid of local pipeline 
             if (isDivSqrt[i]) begin
@@ -367,6 +384,7 @@ module FPExecutionStage(
                 nextLocalPipeReg[i][j].valid = flush[i][j] ? FALSE : localPipeReg[i][j-1].valid;
                 nextLocalPipeReg[i][j].regValid = localPipeReg[i][j-1].regValid; 
                 nextLocalPipeReg[i][j].fpQueueData = localPipeReg[i][j-1].fpQueueData;
+                nextLocalPipeReg[i][j].tid = localPipeReg[i][j-1].tid; // SMT: Propagate
             end 
         end
 
@@ -379,6 +397,10 @@ module FPExecutionStage(
 
             nextStage[i].fpQueueData
                 = localPipeReg[i][FP_EXEC_STAGE_DEPTH-2].fpQueueData;
+            
+            // SMT: Propagate TID
+            nextStage[i].tid = localPipeReg[i][FP_EXEC_STAGE_DEPTH-2].tid;
+            
             // TODO implment fflags
             nextStage[i].fflagsOut = fflagsOut[i];
 

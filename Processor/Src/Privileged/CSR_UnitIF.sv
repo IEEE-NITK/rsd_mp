@@ -6,7 +6,6 @@
 // The interface of a CSR unit.
 //
 
-
 import BasicTypes::*;
 import MemoryMapTypes::*;
 import OpFormatTypes::*;
@@ -20,40 +19,52 @@ interface CSR_UnitIF(
     ExternalInterruptCodePath externalInterruptCode
 );
 
-    logic csrWE;  // CSR write enable
+    // SMT: All CSR accesses must be banked/duplicated per thread.
+    // Interfaces must support arrays.
+
+    logic csrWE;  // CSR write enable (Single port, Muxed inside CSR Unit?)
+    // Ideally, CSR Unit should support 1 write port per cycle, 
+    // but taking TID as input to select bank.
+    
+    // SMT: Adding TID for Read/Write selection
+    ThreadID csrAccessTid; 
+    
     CSR_NumberPath csrNumber;   // CSR number
-    CSR_Code csrCode;           // CSR operation code (ex. set, clear...)
-    DataPath csrReadOut;        // a register value read from CSR 
-    DataPath csrWriteIn;        // a value to be written to CSR
-    CSR_BodyPath csrWholeOut;   // whole values of CSR
+    CSR_Code csrCode;           // CSR operation code
+    DataPath csrReadOut;        // Read Result
+    DataPath csrWriteIn;        // Write Data
+    
+    // Whole CSR State (Duplicated for Interrupt Controller)
+    CSR_BodyPath csrWholeOut [NUM_THREADS];
 
-    // Exception = trap or fault
+    // Exception = trap or fault (Per Thread)
     // Trap request
-    logic   triggerExcpt;
-    ExecutionState excptCause;
-    PC_Path excptCauseAddr;     // EBREAK/ECALL 時の mepc
-    AddrPath excptTargetAddr;   // Trap vector or MRET return target
-    AddrPath excptCauseDataAddr;     // fault 発生時のデータアドレス
+    logic    triggerExcpt [NUM_THREADS];
+    ExecutionState excptCause [NUM_THREADS];
+    PC_Path excptCauseAddr [NUM_THREADS];     // EBREAK/ECALL mepc
+    AddrPath excptTargetAddr [NUM_THREADS];   // Trap vector target
+    AddrPath excptCauseDataAddr [NUM_THREADS]; // Fault data address
 
-    // Interrupt
-    logic triggerInterrupt;
-    CSR_CAUSE_InterruptCodePath interruptCode;
-    PC_Path interruptRetAddr;
+    // Interrupt (Per Thread)
+    logic triggerInterrupt [NUM_THREADS];
+    CSR_CAUSE_InterruptCodePath interruptCode [NUM_THREADS];
+    PC_Path interruptRetAddr [NUM_THREADS];
 
-    // Timer interrupt request
-    logic reqTimerInterrupt;
+    // Timer interrupt request (Global or Per Thread?)
+    // Timer usually per HART (Hardware Thread)
+    logic reqTimerInterrupt [NUM_THREADS];
 
-    // Latched code, see the cooments in the CSR.
-    ExternalInterruptCodePath externalInterruptCodeInCSR;
+    // Latched code
+    ExternalInterruptCodePath externalInterruptCodeInCSR [NUM_THREADS];
 
     // Used in updating minstret
-    CommitLaneCountPath commitNum;
+    CommitLaneCountPath commitNum [NUM_THREADS];
 
 `ifdef RSD_MARCH_FP_PIPE
-    FFlags_Path fflags;
-    Rounding_Mode frm;
-    logic fflagsWE;
-    FFlags_Path fflagsData;
+    FFlags_Path fflags [NUM_THREADS];
+    Rounding_Mode frm [NUM_THREADS];
+    logic fflagsWE [NUM_THREADS];
+    FFlags_Path fflagsData [NUM_THREADS];
 `endif
 
     modport MemoryExecutionStage(
@@ -61,6 +72,7 @@ interface CSR_UnitIF(
         clk, rst, rstStart,
         csrReadOut,
     output 
+        csrAccessTid, // Added
         csrWE,
         csrNumber,
         csrCode,
@@ -70,15 +82,11 @@ interface CSR_UnitIF(
 `ifdef RSD_MARCH_FP_PIPE
     modport FPExecutionStage(
     input
-        frm
+        frm // Array access required in module
     );
 `endif
 
-    // 割り込みは以下の流れで要求が流れる
-    // IO_Unit -> reqTimerInterrupt ->
-    // CSR_Unit -> csrReg.mie.MTIE ->
-    // InterruptController -> triggerInterrupt -> 
-    // FetchStage and CSR_Unit
+    // IO_Unit drives interrupts. Assuming it knows about threads or broadcasts.
     modport IO_Unit(
     output 
         reqTimerInterrupt
@@ -113,6 +121,7 @@ interface CSR_UnitIF(
     modport CSR_Unit(
     input
         clk, rst, rstStart,
+        csrAccessTid, // Added
         csrWE,
         csrNumber,
         csrCode,

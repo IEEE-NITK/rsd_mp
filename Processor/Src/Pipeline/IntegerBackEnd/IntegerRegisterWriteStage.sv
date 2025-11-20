@@ -62,6 +62,7 @@ module IntegerRegisterWriteStage(
     logic update [ INT_ISSUE_WIDTH ];
     logic valid [ INT_ISSUE_WIDTH ];
     logic regValid [ INT_ISSUE_WIDTH ];
+    ThreadID opTid [ INT_ISSUE_WIDTH ];
 
     always_comb begin
 
@@ -72,13 +73,16 @@ module IntegerRegisterWriteStage(
         for ( int i = 0; i < INT_ISSUE_WIDTH; i++ ) begin
             iqData[i] = pipeReg[i].intQueueData;
             regValid[i] = pipeReg[i].dataOut.valid;
+            opTid[i] = pipeReg[i].tid;
 
             valid[i] = pipeReg[i].valid;
+            
+            // SMT Flush Check
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         iqData[i].activeListPtr
                         );
             update[i] = !stall && !clear && valid[i] && !flush[i];
@@ -96,6 +100,7 @@ module IntegerRegisterWriteStage(
             // Active list
             //
             alWriteData[i].ptr = iqData[i].activeListPtr;
+            alWriteData[i].tid = iqData[i].tid; // SMT: Tag completion with TID
             alWriteData[i].loadQueuePtr = iqData[i].loadQueueRecoveryPtr;
             alWriteData[i].storeQueuePtr = iqData[i].storeQueueRecoveryPtr;
             alWriteData[i].pc = pipeReg[i].brResult.nextAddr;
@@ -106,7 +111,7 @@ module IntegerRegisterWriteStage(
             // Branch results.
             brResult[i] = pipeReg[i].brResult;
             brResult[i].valid = pipeReg[i].brResult.valid && update[i] && regValid[i];
-            ifStage.brResult = brResult;
+            ifStage.brResult[i] = brResult[i]; // Assumes ifStage accepts array, which it does.
 
             // ExecState
             if ( update[i] ) begin

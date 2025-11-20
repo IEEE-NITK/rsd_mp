@@ -107,6 +107,7 @@ module IntegerRegisterReadStage(
     IntOpSubInfo intSubInfo[INT_ISSUE_WIDTH];
     OpSrc opSrc[INT_ISSUE_WIDTH];
     OpDst opDst[INT_ISSUE_WIDTH];
+    ThreadID opTid[INT_ISSUE_WIDTH];
     IntegerExecutionStageRegPath nextStage[INT_ISSUE_WIDTH];
 
     always_comb begin
@@ -119,6 +120,7 @@ module IntegerRegisterReadStage(
             opSrc[i] = iqData[i].opSrc;
             opDst[i] = iqData[i].opDst;
             pc[i] = ToAddrFromPC(iqData[i].pc);
+            opTid[i] = pipeReg[i].tid; // SMT: Extract TID
 
             //
             // To the register file.
@@ -128,8 +130,6 @@ module IntegerRegisterReadStage(
 
             //
             // To the bypass network.
-            // ストールやフラッシュの制御は，Bypass モジュールの内部で
-            // コントローラの信号を参照して行われている
             //
             bypass.intPhySrcRegNumA[i] = opSrc[i].phySrcRegNumA;
             bypass.intPhySrcRegNumB[i] = opSrc[i].phySrcRegNumB;
@@ -168,15 +168,19 @@ module IntegerRegisterReadStage(
             `endif
 
             // リセットorフラッシュ時はNOP
+            // SMT: Flush check with TID
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         iqData[i].activeListPtr
                         );
             nextStage[i].valid =
                 (stall || clear || port.rst || flush[i]) ? FALSE : pipeReg[i].valid;
+            
+            // SMT: Pass TID
+            nextStage[i].tid = opTid[i];
 
             // レジスタ値&フラグ
             nextStage[i].operandA = operandA[i];

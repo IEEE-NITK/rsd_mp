@@ -6,7 +6,6 @@
 // A pipeline stage for issuing ops.
 //
 
-
 import BasicTypes::*;
 import MicroOpTypes::*;
 import PipelineTypes::*;
@@ -40,13 +39,17 @@ module IntegerIssueStage(
 
     always_comb begin
         for ( int i = 0; i < INT_ISSUE_WIDTH; i++) begin
-            if (recovery.toRecoveryPhase) begin
+            // SMT: Retrieve TID from Scheduler data (since IssueStageRegPath doesn't carry it)
+            ThreadID currentOpTid;
+            currentOpTid = scheduler.intIssuedData[i].tid;
+            
+            if (recovery.toRecoveryPhase[currentOpTid]) begin // SMT Array Indexing
                 nextPipeReg[i].valid = pipeReg[i].valid &&
                                     !SelectiveFlushDetector(
-                                        recovery.toRecoveryPhase,
-                                        recovery.flushRangeHeadPtr,
-                                        recovery.flushRangeTailPtr,
-                                        recovery.flushAllInsns,
+                                        recovery.toRecoveryPhase[currentOpTid],
+                                        recovery.flushRangeHeadPtr[currentOpTid],
+                                        recovery.flushRangeTailPtr[currentOpTid],
+                                        recovery.flushAllInsns[currentOpTid],
                                         scheduler.intIssuedData[i].activeListPtr
                                         );
             end
@@ -57,13 +60,14 @@ module IntegerIssueStage(
         end
     end
 
-    // Pipeline controll
+    // Pipeline control
     logic stall, clear;
     logic flush[ INT_ISSUE_WIDTH ];
     logic valid [ INT_ISSUE_WIDTH ];
     IntegerRegisterReadStageRegPath nextStage [ INT_ISSUE_WIDTH ];
     IntIssueQueueEntry issuedData [ INT_ISSUE_WIDTH ];
     IssueQueueIndexPath issueQueuePtr [ INT_ISSUE_WIDTH ];
+    ThreadID opTid [ INT_ISSUE_WIDTH ];
 
     always_comb begin
 
@@ -82,14 +86,17 @@ module IntegerIssueStage(
                 issuedData[i] = scheduler.intIssuedData[i];
                 valid[i] = !stall && pipeReg[i].valid;
             end
+            
+            opTid[i] = issuedData[i].tid; // Extract TID
 
             issueQueuePtr[i] = pipeReg[i].issueQueuePtr;
 
+            // SMT Flush Check
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         issuedData[i].activeListPtr
                         );
 
@@ -101,6 +108,9 @@ module IntegerIssueStage(
             // リセットorフラッシュ時はNOP
             nextStage[i].valid =
                 (clear || port.rst || flush[i]) ? FALSE : valid[i];
+            
+            // SMT: Propagate TID
+            nextStage[i].tid = opTid[i];
             nextStage[i].intQueueData = issuedData[i];
 
 `ifndef RSD_DISABLE_DEBUG_REGISTER

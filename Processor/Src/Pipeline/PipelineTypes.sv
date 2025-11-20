@@ -76,6 +76,7 @@ typedef struct packed { // FetchStageRegPath
     OpSerial sid;
 `endif
     logic valid;
+    ThreadID tid;
     PC_Path pc;
 } FetchStageRegPath;
 
@@ -86,6 +87,7 @@ typedef struct packed // PreDecodeStageRegPath
 `endif
 
     logic    valid;     // Valid flag. If this is 0, this op is treated as NOP.
+    ThreadID tid;
     InsnPath insn;      // Instruction code
     PC_Path pc;
     BranchPred brPred;
@@ -98,6 +100,7 @@ typedef struct packed // DecodeStageRegPath
 `endif
 
     logic    valid;     // Valid flag. If this is 0, this op is treated as NOP.
+    ThreadID tid;
     InsnPath insn;      // Instruction code
     PC_Path pc;
     BranchPred brPred;
@@ -114,6 +117,7 @@ typedef struct packed // RenameStageRegPath
 `endif
 
     logic    valid;     // Valid flag. If this is 0, this op is treated as NOP.
+    ThreadID tid;
     OpInfo   opInfo;    // Decoded micro op.
     PC_Path pc;
     BranchPred bPred;
@@ -126,6 +130,7 @@ typedef struct packed // DispatchStageRegPath
 `endif
 
     logic    valid;     // Valid flag. If this is 0, this op is treated as NOP.
+    ThreadID tid;
     OpInfo   opInfo;    // Decoded micro op.
 
     PC_Path pc;        // Program counter
@@ -171,6 +176,7 @@ typedef struct packed // IntegerRegisterReadStageRegPath
 `endif
 
     logic valid;     // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     IntIssueQueueEntry intQueueData;
 } IntegerRegisterReadStageRegPath;
 
@@ -182,6 +188,7 @@ typedef struct packed // IntegerExecutionStageRegPath
 `endif
 
     logic valid;      // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     IntIssueQueueEntry intQueueData;
 
     // register read out
@@ -201,6 +208,7 @@ typedef struct packed // IntegerRegisterWriteStageRegPath
 `endif
 
     logic valid;  // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     IntIssueQueueEntry intQueueData;
 
     PRegDataPath dataOut;   // Result of ALU/shifter/Load
@@ -219,6 +227,7 @@ typedef struct packed // ComplexIntegerRegisterReadStageRegPath
 `endif
 
     logic valid;     // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     logic replay;
     ComplexIssueQueueEntry complexQueueData;
 } ComplexIntegerRegisterReadStageRegPath;
@@ -231,6 +240,7 @@ typedef struct packed // ComplexIntegerExecutionStageRegPath
 `endif
 
     logic valid;      // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     logic replay;
     logic isFlushed;
     ComplexIssueQueueEntry complexQueueData;
@@ -252,6 +262,7 @@ typedef struct packed // ComplexIntegerRegisterWriteStageRegPath
 `endif
 
     logic valid;  // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     ComplexIssueQueueEntry complexQueueData;
 
     PRegDataPath dataOut;   // Result of Execution
@@ -268,6 +279,7 @@ typedef struct packed // MemoryRegisterReadStageRegPath
 `endif
 
     logic valid;     // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     MemIssueQueueEntry memQueueData;
 
     // For release of the entries of an issue queue. See comments in MemoryExecutionStage.
@@ -283,6 +295,7 @@ typedef struct packed // MemoryExecutionStageRegPath
 `endif
 
     logic valid;      // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     MemIssueQueueEntry memQueueData;
 
     // register read out
@@ -306,6 +319,7 @@ typedef struct packed // MemoryTagAccessStageRegPath
 `endif
 
     logic valid;      // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     MemIssueQueueEntry memQueueData;
 
     logic condEnabled;      // 条件コードは有効か
@@ -326,6 +340,7 @@ typedef struct packed // MemoryAccessStageRegPath
 `endif
 
     logic    valid;      // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
 
     logic isStore;
     logic isLoad;
@@ -363,6 +378,7 @@ typedef struct packed // MemoryRegisterWriteStageRegPath
 `endif
 
     logic    valid;     // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     ActiveListIndexPath activeListPtr;
     LoadQueueIndexPath loadQueueRecoveryPtr;
     StoreQueueIndexPath storeQueueRecoveryPtr;
@@ -391,6 +407,7 @@ typedef struct packed // FPRegisterReadStageRegPath
 `endif
 
     logic valid;     // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     logic replay;
     FPIssueQueueEntry fpQueueData;
 } FPRegisterReadStageRegPath;
@@ -403,6 +420,7 @@ typedef struct packed // FPExecutionStageRegPath
 `endif
 
     logic valid;      // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     logic replay;
     logic isFlushed;
     FPIssueQueueEntry fpQueueData;
@@ -425,6 +443,7 @@ typedef struct packed // FPRegisterWriteStageRegPath
 `endif
 
     logic valid;  // Valid flag. If this is 0, its op is treated as NOP.
+    ThreadID tid;
     FPIssueQueueEntry fpQueueData;
 
     PRegDataPath dataOut;   // Result of Execution

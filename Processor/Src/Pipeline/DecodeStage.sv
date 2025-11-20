@@ -3,7 +3,7 @@
 
 
 //
-// DecodeStage
+// DecodeStage (SMT Updated)
 //
 
 import BasicTypes::*;
@@ -16,7 +16,7 @@ import FetchUnitTypes::*;
 
 //
 // Pick micro ops for feeding to a next stage from all decoded micro ops.
-//
+// (Unchanged)
 module MicroOpPicker(
 input
     AllDecodedMicroOpPath req,
@@ -40,12 +40,9 @@ output
             pickedIndex[i] = 0;
             for (int mn = 0; mn < ALL_DECODED_MICRO_OP_WIDTH; mn++) begin
                 if (cur[mn] && !clear) begin
-                    // シリアライズが有効な場合，1 mop のみ次のステージに送る
-                    // If this op is serialized one, only a single op is picked.
                     if (serialize[mn]) begin
                         clear = TRUE;
                     end
-                    // 既に通常命令を送っている場合，このシリアライズ命令はピックしない
                     if (clear && sent) begin
                         break;
                     end
@@ -77,7 +74,6 @@ module DecodeStage(
     DecodeStageRegPath pipeReg[DECODE_WIDTH];
     
 `ifndef RSD_SYNTHESIS
-    // Don't care these values, but avoiding undefined status in Questa.
     initial begin
         for (int i = 0; i < DECODE_WIDTH; i++) begin
             pipeReg[i] = '0;
@@ -151,6 +147,9 @@ module DecodeStage(
         end
     end
 
+    // SMT Note DecodedBranchResolver needs to be careful not to cross-contaminate threads.
+    // Assuming the module logic is purely local per instruction slot.
+    // if flushing one thread mops, other threads should not be affected.
     DecodedBranchResolver decodeStageBranchResolver(
         .clk(port.clk),
         .rst(port.rst),
@@ -169,8 +168,27 @@ module DecodeStage(
         .recoveredPC(recoveredPC)
     );
     
-    always_comb begin
+always_comb begin
+        // Flush Signal
         port.nextFlush = complete && flushTriggered && !clear;
+        
+        // SMT Update: Identify the thread causing the flush
+        // 'recoveredPC' comes from DecodedBranchResolver, which looked at 'pipeReg'.
+        // We need to find which pipeReg entry triggered the flush.
+        // DecodedBranchResolver usually flushes the FIRST misprediction it finds.
+        // We need to extract that TID.
+        
+        // Logic: Find the first 'insnFlushTriggering'
+        ThreadID triggeringTid;
+        triggeringTid = 0; // Default
+        
+        for(int i=0; i<DECODE_WIDTH; i++) begin
+            if(insnFlushTriggering[i]) begin
+                triggeringTid = pipeReg[i].tid;
+                break;
+            end
+        end
+        port.nextFlushTid = triggeringTid; 
         port.nextRecoveredPC = recoveredPC;
     end
     
@@ -269,6 +287,7 @@ module DecodeStage(
             nextStage[i].opInfo = microOps[ mopPickedIndex[i] ];
 
             nextStage[i].valid = insnValidOut[orgPickedInsnLane] && mopPicked[i] && !clear;
+            nextStage[i].tid = pipeReg[orgPickedInsnLane].tid; // SMT: Pass TID
             nextStage[i].pc = pipeReg[orgPickedInsnLane].pc;
             nextStage[i].bPred = brPredOut[orgPickedInsnLane];  
 
@@ -318,5 +337,3 @@ module DecodeStage(
 
     end
 endmodule : DecodeStage
-
-

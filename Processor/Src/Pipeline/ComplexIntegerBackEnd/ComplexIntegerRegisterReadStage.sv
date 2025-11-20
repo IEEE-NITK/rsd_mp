@@ -60,6 +60,7 @@ module ComplexIntegerRegisterReadStage(
     MulOpSubInfo mulOpInfo[COMPLEX_ISSUE_WIDTH];
     OpSrc opSrc[COMPLEX_ISSUE_WIDTH];
     OpDst opDst[COMPLEX_ISSUE_WIDTH];
+    ThreadID opTid[COMPLEX_ISSUE_WIDTH];
     ComplexIntegerExecutionStageRegPath nextStage[COMPLEX_ISSUE_WIDTH];
 
     always_comb begin
@@ -71,6 +72,7 @@ module ComplexIntegerRegisterReadStage(
             mulOpInfo[i] = iqData[i].complexOpInfo.mulSubInfo;
             opSrc[i] = iqData[i].opSrc;
             opDst[i] = iqData[i].opDst;
+            opTid[i] = pipeReg[i].tid; // SMT: Extract TID
 
             //
             // To the register file.
@@ -81,8 +83,6 @@ module ComplexIntegerRegisterReadStage(
 
             //
             // To the bypass network.
-            // ストールやフラッシュの制御は，Bypass モジュールの内部で
-            // コントローラの信号を参照して行われている
             //
             bypass.complexPhySrcRegNumA[i] = opSrc[i].phySrcRegNumA;
             bypass.complexPhySrcRegNumB[i] = opSrc[i].phySrcRegNumB;
@@ -93,8 +93,6 @@ module ComplexIntegerRegisterReadStage(
             // Complex Integer では、operandTypeはOOT_REGしか未サポート
             bypass.complexReadRegA[i] = TRUE;
             bypass.complexReadRegB[i] = TRUE;
-            //bypass.complexReadRegA[i] = ( iqData[i].complexOpInfo.operandTypeA == OOT_REG );
-            //bypass.complexReadRegB[i] = ( iqData[i].complexOpInfo.operandTypeB == OOT_REG );
 
             //
             // --- Pipeline ラッチ書き込み
@@ -104,21 +102,21 @@ module ComplexIntegerRegisterReadStage(
             `endif
 
             // リセットorフラッシュ時はNOP
+            // SMT: Check recovery signal for specific TID
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         iqData[i].activeListPtr
                         );
             nextStage[i].valid =
                 (stall || clear || port.rst || flush[i]) ? FALSE : pipeReg[i].valid;
 
+            nextStage[i].tid = opTid[i]; // SMT: Pass TID
             nextStage[i].replay = pipeReg[i].replay;
 
             // divがこのステージ内でフラッシュされた場合：
-            // Dividerへの要求予約を取り消し，
-            // IQからdivを発行できるようにする 
             if (iqData[i].opType == COMPLEX_MOP_TYPE_DIV) begin
                 nextStage[i].isFlushed = pipeReg[i].valid && flush[i];
             end

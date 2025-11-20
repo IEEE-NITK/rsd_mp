@@ -37,6 +37,9 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
     MemAccessMode executedLoadMemAccessMode [ LOAD_ISSUE_WIDTH ];
     StoreQueueIndexPath executedStoreQueuePtrByLoad [ LOAD_ISSUE_WIDTH ];
     LoadQueueIndexPath executedLoadQueuePtrByLoad[ LOAD_ISSUE_WIDTH ];
+    // SMT:
+    ThreadID executedLoadTid [ LOAD_ISSUE_WIDTH ];
+
 
     logic executeStore [ STORE_ISSUE_WIDTH ];
     logic executedStoreCondEnabled [ STORE_ISSUE_WIDTH ];
@@ -47,14 +50,16 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
     MemAccessMode executedStoreMemAccessMode [ STORE_ISSUE_WIDTH ];
     LoadQueueIndexPath executedLoadQueuePtrByStore [ STORE_ISSUE_WIDTH ];
     StoreQueueIndexPath executedStoreQueuePtrByStore [ STORE_ISSUE_WIDTH ];
+    // SMT:
+    ThreadID executedStoreTid [ STORE_ISSUE_WIDTH ];
 
     // Commit
-    logic commitStore;
-    CommitLaneCountPath commitStoreNum;
+    logic commitStore[NUM_THREADS]; // Array for SMT
+    CommitLaneCountPath commitStoreNum[NUM_THREADS];
 
     // Retire
-    logic releaseLoadQueue;
-    CommitLaneCountPath releaseLoadQueueEntryNum;
+    logic releaseLoadQueue[NUM_THREADS]; // Array for SMT
+    CommitLaneCountPath releaseLoadQueueEntryNum[NUM_THREADS];
 
 
     // Whether to release the head entry(s) of the SQ.
@@ -90,6 +95,7 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
     logic dcReadReq[LOAD_ISSUE_WIDTH];    // Read request from the LSU.
     logic dcReadBusy[LOAD_ISSUE_WIDTH];   // Read ports are busy and cannot accept requests.
     logic dcReadHit[LOAD_ISSUE_WIDTH];
+    ThreadID dcReadTid[LOAD_ISSUE_WIDTH];
 
     PhyAddrPath dcReadAddr[LOAD_ISSUE_WIDTH];
     DCacheLinePath dcReadData[LOAD_ISSUE_WIDTH];
@@ -106,6 +112,7 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
     logic dcWriteReqAck;
     logic dcWriteBusy;
     logic dcWriteHit;
+    ThreadID dcWriteTid;
     PhyAddrPath dcWriteAddr;
     DCacheLinePath dcWriteData;
     DCacheByteEnablePath dcWriteByteWE;
@@ -144,6 +151,8 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
         dcReadAddr,
         dcReadUncachable,
         dcReadActiveListPtr,
+        dcReadTid,
+        dcWriteTid,
         makeMSHRCanBeInvalidDirect,
     output
         dcReadHit,
@@ -183,6 +192,7 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
         releaseLoadQueue,
         releaseLoadQueueEntryNum,
         executedStoreMemAccessMode,
+        executedLoadTid, // SMT
     output
         allocatedLoadQueuePtr,
         loadQueueAllocatable,
@@ -211,6 +221,8 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
         releaseStoreQueueHeadEntryNum,
         retiredStoreQueuePtr,
         executedLoadMemAccessMode,
+        executedStoreTid, // SMT
+        executedLoadTid,  // SMT
     output
         allocatedStoreQueuePtr,
         storeQueueAllocatable,
@@ -254,6 +266,7 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
         dcWriteAddr,
         dcWriteByteWE,
         dcWriteUncachable,
+        dcWriteTid,
         retiredStoreQueuePtr,
         releaseStoreQueueHead,
         busyInRecovery,
@@ -299,7 +312,8 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
         dcReadReq,
         dcReadAddr,
         dcReadUncachable,
-        dcReadActiveListPtr
+        dcReadActiveListPtr,
+        dcReadTid
     );
 
     modport MemoryTagAccessStage(
@@ -331,7 +345,9 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
         executedStoreRegValid,
         executedLoadMemAccessMode,
         executedStoreMemAccessMode,
-        memAccessOrderViolation
+        memAccessOrderViolation,
+        executedLoadTid, // SMT
+        executedStoreTid // SMT
     );
 
     modport MemoryAccessStage(
@@ -368,5 +384,3 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
     );
 
 endinterface : LoadStoreUnitIF
-
-

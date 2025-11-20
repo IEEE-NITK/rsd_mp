@@ -24,6 +24,7 @@ interface RenameStageIF( input logic clk, rst, rstStart );
     input
         clk,
         rst,
+        tid, // SMT: RenameStage must drive this
     output
         nextStage,
         pc
@@ -35,12 +36,13 @@ interface RenameStageIF( input logic clk, rst, rstStart );
         memDependencyPred
     );
 
-    modport MemoryDependencyPredictor(
+modport MemoryDependencyPredictor(
     input
         clk,
         rst,
         rstStart,
         pc,
+        tid, // Add this so predictor can read it
     output
         memDependencyPred
     );

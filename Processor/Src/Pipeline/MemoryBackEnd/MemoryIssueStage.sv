@@ -41,14 +41,18 @@ module MemoryIssueStage(
 
     always_comb begin
         for ( int i = 0; i < MEM_ISSUE_WIDTH; i++) begin
-            if (recovery.toRecoveryPhase) begin
+            // SMT: Get TID from Scheduler
+            ThreadID currentOpTid;
+            currentOpTid = scheduler.memIssuedData[i].tid;
+
+            if (recovery.toRecoveryPhase[currentOpTid]) begin
                 nextPipeReg[i].valid = 
                     pipeReg[i].valid &&
                     !SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[currentOpTid],
+                        recovery.flushRangeHeadPtr[currentOpTid],
+                        recovery.flushRangeTailPtr[currentOpTid],
+                        recovery.flushAllInsns[currentOpTid],
                         scheduler.memIssuedData[i].activeListPtr
                     );
             end
@@ -69,6 +73,7 @@ module MemoryIssueStage(
     MemoryRegisterReadStageRegPath nextStage [ MEM_ISSUE_WIDTH ];
     MemIssueQueueEntry issuedData [ MEM_ISSUE_WIDTH ];
     IssueQueueIndexPath issueQueuePtr [ MEM_ISSUE_WIDTH ];
+    ThreadID opTid [ MEM_ISSUE_WIDTH ];
 
     always_comb begin
 
@@ -85,14 +90,16 @@ module MemoryIssueStage(
                 issuedData[i] = scheduler.memIssuedData[i];
                 valid[i] = !stall && pipeReg[i].valid;
             end
+            
+            opTid[i] = issuedData[i].tid; // Extract TID
 
             issueQueuePtr[i] = pipeReg[i].issueQueuePtr;
 
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         issuedData[i].activeListPtr
                         );
 
@@ -108,7 +115,11 @@ module MemoryIssueStage(
             // リセットorフラッシュ時はNOP
             nextStage[i].valid =
                 (clear || port.rst || flush[i]) ? FALSE : valid[i];
+            
+            // SMT: Pass TID
+            nextStage[i].tid = opTid[i];
             nextStage[i].memQueueData = issuedData[i];
+
 `ifndef RSD_DISABLE_DEBUG_REGISTER
             nextStage[i].opId = issuedData[i].opId;
 `endif

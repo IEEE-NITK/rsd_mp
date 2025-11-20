@@ -90,6 +90,7 @@ module IntegerExecutionStage(
     IntOpInfo  intOpInfo [ INT_ISSUE_WIDTH ];
     BranchPred bPred [ INT_ISSUE_WIDTH ];
     AddrPath pc [ INT_ISSUE_WIDTH ];
+    ThreadID opTid [ INT_ISSUE_WIDTH ];
 
     PRegDataPath fuOpA [ INT_ISSUE_WIDTH ];
     PRegDataPath fuOpB [ INT_ISSUE_WIDTH ];
@@ -151,11 +152,14 @@ module IntegerExecutionStage(
             intSubInfo[i] = intOpInfo[i].intSubInfo;
             brSubInfo[i] = intOpInfo[i].brSubInfo;
             pc[i] = ToAddrFromPC(iqData[i].pc);
+            opTid[i] = pipeReg[i].tid;
+
+            // SMT: Flush check with TID
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         iqData[i].activeListPtr
                         );
 
@@ -214,6 +218,9 @@ module IntegerExecutionStage(
             
             // The address of a branch.
             brResult[i].brAddr = ToPC_FromAddr(pc[i]);
+            
+            // SMT: Need to add TID to BranchResult so Fetch unit knows who to update
+            brResult[i].tid = opTid[i]; // Added to BranchResult struct in FetchUnitTypes
 
             // ターゲットアドレスの計算
             if( brTaken[i] ) begin
@@ -238,9 +245,9 @@ module IntegerExecutionStage(
             predMiss[i] =
                 brResult[i].valid &&
                 (
-                     (bPred[i].predTaken != brTaken[i]) ||
-                     (brTaken[i] == TRUE &&
-                      bPred[i].predAddr != brResult[i].nextAddr)
+                      (bPred[i].predTaken != brTaken[i]) ||
+                      (brTaken[i] == TRUE &&
+                       bPred[i].predAddr != brResult[i].nextAddr)
                 );
 
             brResult[i].mispred = predMiss[i];
@@ -263,6 +270,9 @@ module IntegerExecutionStage(
             // リセットorフラッシュ時はNOP
             nextStage[i].valid =
                 (stall || clear || port.rst || flush[i]) ? FALSE : pipeReg[i].valid;
+            
+            // SMT: Pass TID
+            nextStage[i].tid = opTid[i];
 
             nextStage[i].dataOut = dataOut[i];
 

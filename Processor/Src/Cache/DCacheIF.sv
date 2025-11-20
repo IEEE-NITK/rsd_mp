@@ -99,10 +99,12 @@ input
     // Miss handler
     logic initMSHR[MSHR_NUM];
     PhyAddrPath initMSHR_Addr[MSHR_NUM];
+    ThreadID initMSHR_Tid[MSHR_NUM];
     ActiveListIndexPath initMSHR_ActiveListPtr[MSHR_NUM];
 
     logic mshrValid[MSHR_NUM];
     PhyAddrPath mshrAddr[MSHR_NUM];
+    ThreadID mshrTid[MSHR_NUM];
 
     MSHR_Phase mshrPhase[MSHR_NUM]; // MSHR phase.
     DCacheLinePath mshrData[MSHR_NUM]; // Data in MSHR.
@@ -121,6 +123,7 @@ input
     logic dcFlushReqAck;
     logic dcFlushComplete;
     logic dcFlushReq;
+    ThreadID dcFlushTid;
     logic flushComplete;
     logic mshrFlushComplete;
 
@@ -225,6 +228,7 @@ input
         rst,
         initMSHR,
         initMSHR_Addr,
+        initMSHR_Tid,
         initMSHR_ActiveListPtr,
         mshrCacheGrt,
         mshrCacheMuxTagOut,
@@ -239,6 +243,7 @@ input
         storedLineData,
         storedLineByteWE,
         dcFlushing,
+        dcFlushTid,
     output
         mshrCacheReq,
         mshrCacheMuxIn,
@@ -246,6 +251,7 @@ input
         mshrMemMuxIn,
         mshrValid,
         mshrAddr,
+        mshrTid,
         mshrPhase,
         mshrData,
         mshrFlushComplete
@@ -295,9 +301,11 @@ input
         memValid,
         mshrValid,
         mshrAddr,
+        mshrTid,
         mshrPhase,
         dcFlushReqAck,
         dcFlushComplete,
+        dcFlushTid,
     output
         lsuCacheReq,
         lsuMuxIn,
@@ -307,6 +315,7 @@ input
         memAccessResponse,
         initMSHR,
         initMSHR_Addr,
+        initMSHR_Tid,
         initMSHR_ActiveListPtr,
         isAllocatedByStore,
         isUncachable,
@@ -314,6 +323,7 @@ input
         storedLineData,
         storedLineByteWE,
         dcFlushReq,
+        dcFlushTid,
         flushComplete,
         lsuCacheGrtReg
     );

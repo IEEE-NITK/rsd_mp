@@ -116,6 +116,8 @@ module DispatchStage(
             intEntry[i].loadQueueRecoveryPtr = pipeReg[i].loadQueueRecoveryPtr;
             intEntry[i].storeQueueRecoveryPtr = pipeReg[i].storeQueueRecoveryPtr;
 
+            // Thread ID
+            intEntry[i].tid = pipeReg[i].tid;
             // PC
             intEntry[i].pc = pipeReg[i].pc;
 
@@ -150,6 +152,8 @@ module DispatchStage(
             // ActiveListIndexPath
             complexEntry[i].activeListPtr = pipeReg[i].activeListPtr;
 
+            // Thread ID
+            complexEntry[i].tid = pipeReg[i].tid;
             // PC
             complexEntry[i].pc = pipeReg[i].pc;
 
@@ -212,6 +216,8 @@ module DispatchStage(
             memEntry[i].loadQueueRecoveryPtr = pipeReg[i].loadQueueRecoveryPtr;
             memEntry[i].storeQueueRecoveryPtr = pipeReg[i].storeQueueRecoveryPtr;
 
+            // Thread ID
+            memEntry[i].tid = pipeReg[i].tid;
             // PC
             memEntry[i].pc = pipeReg[i].pc;
 
@@ -237,6 +243,8 @@ module DispatchStage(
             fpEntry[i].loadQueueRecoveryPtr  = pipeReg[i].loadQueuePtr;
             fpEntry[i].storeQueueRecoveryPtr = pipeReg[i].storeQueuePtr;
 
+            // Thread ID
+            fpEntry[i].tid = pipeReg[i].tid;
             // PC
             fpEntry[i].pc = pipeReg[i].pc;
 `endif

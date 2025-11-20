@@ -6,7 +6,6 @@
 // A pipeline stage for issuing ops.
 //
 
-
 import BasicTypes::*;
 import MicroOpTypes::*;
 import PipelineTypes::*;
@@ -43,13 +42,19 @@ module FPIssueStage(
 
     always_comb begin
         for ( int i = 0; i < FP_ISSUE_WIDTH; i++) begin
-            if (recovery.toRecoveryPhase) begin
+            // SMT Update: Retrieve TID from the scheduler data.
+            // Since pipeReg contains the pointer to the IQ entry, and the IQ entry 
+            // contains the TID, we can read it directly from the scheduler interface.
+            ThreadID currentOpTid;
+            currentOpTid = scheduler.fpIssuedData[i].tid;
+
+            if (recovery.toRecoveryPhase[currentOpTid]) begin
                 nextPipeReg[i].valid = pipeReg[i].valid &&
                                     !SelectiveFlushDetector(
-                                        recovery.toRecoveryPhase,
-                                        recovery.flushRangeHeadPtr,
-                                        recovery.flushRangeTailPtr,
-                                        recovery.flushAllInsns,
+                                        recovery.toRecoveryPhase[currentOpTid],
+                                        recovery.flushRangeHeadPtr[currentOpTid],
+                                        recovery.flushRangeTailPtr[currentOpTid],
+                                        recovery.flushAllInsns[currentOpTid],
                                         scheduler.fpIssuedData[i].activeListPtr
                                         );
             end
@@ -68,6 +73,7 @@ module FPIssueStage(
     FPRegisterReadStageRegPath nextStage [ FP_ISSUE_WIDTH ];
     FPIssueQueueEntry issuedData [ FP_ISSUE_WIDTH ];
     IssueQueueIndexPath issueQueuePtr [ FP_ISSUE_WIDTH ];
+    ThreadID opTid [ FP_ISSUE_WIDTH ];
 
     always_comb begin
 
@@ -87,13 +93,17 @@ module FPIssueStage(
                 valid[i] = !stall && pipeReg[i].valid;
             end
 
+            // SMT: Extract TID from the issued data structure
+            opTid[i] = issuedData[i].tid;
+
             issueQueuePtr[i] = pipeReg[i].issueQueuePtr;
 
+            // SMT: Check flush using specific Thread ID
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         issuedData[i].activeListPtr
                         );
 
@@ -111,6 +121,10 @@ module FPIssueStage(
             // リセットorフラッシュ時はNOP
             nextStage[i].valid =
                 (clear || port.rst || flush[i]) ? FALSE : valid[i];
+            
+            // SMT: Propagate TID to next stage
+            nextStage[i].tid = opTid[i];
+
             nextStage[i].fpQueueData = issuedData[i];
             nextStage[i].replay = scheduler.replay;
 `ifndef RSD_DISABLE_DEBUG_REGISTER

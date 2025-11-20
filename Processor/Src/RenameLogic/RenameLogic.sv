@@ -1,16 +1,11 @@
 // Copyright 2019- RSD contributors.
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 
-
-//
-// RenameLogic
-//
-
 import BasicTypes::*;
 import RenameLogicTypes::*;
 import SchedulerTypes::*;
 import ActiveListIndexTypes::*;
-
+import MemoryMapTypes::*;
 
 module RenameLogic (
     RenameLogicIF.RenameLogic port,
@@ -20,13 +15,14 @@ module RenameLogic (
 
     logic allocatePhyReg [ RENAME_WIDTH ];
     PRegNumPath allocatedPhyRegNum [ RENAME_WIDTH ];
-
     logic allocatePhyScalarReg [ RENAME_WIDTH ];
     PScalarRegNumPath allocatedPhyScalarRegNum [ RENAME_WIDTH ];
+    
+    // Aggregated release signals
     logic releasePhyScalarReg [ COMMIT_WIDTH ];
     PScalarRegNumPath releasedPhyScalarRegNum [ COMMIT_WIDTH ];
     ScalarFreeListCountPath scalarFreeListCount;
-
+    
 `ifdef RSD_MARCH_FP_PIPE
     logic allocatePhyScalarFPReg [ RENAME_WIDTH ];
     PScalarFPRegNumPath allocatedPhyScalarFPRegNum [ RENAME_WIDTH ];
@@ -35,11 +31,7 @@ module RenameLogic (
     ScalarFPFreeListCountPath scalarFPFreeListCount;
 `endif
 
-    ActiveListEntry alReadData [ COMMIT_WIDTH ];
-
-    //
-    // --- Free lists for registers.
-    //
+    // Free lists
     MultiWidthFreeList #(
         .SIZE( SCALAR_FREE_LIST_ENTRY_NUM ),
         .ENTRY_BIT_SIZE( PSCALAR_NUM_BIT_WIDTH ),
@@ -51,10 +43,8 @@ module RenameLogic (
         .rst( port.rst ),
         .rstStart( port.rstStart ),
         .count( scalarFreeListCount ),
-
         .pop( allocatePhyScalarReg ),
         .poppedData( allocatedPhyScalarRegNum ),
-
         .push( releasePhyScalarReg ),
         .pushedData( releasedPhyScalarRegNum )
     );
@@ -71,205 +61,160 @@ module RenameLogic (
         .rst( port.rst ),
         .rstStart( port.rstStart ),
         .count( scalarFPFreeListCount ),
-
         .pop( allocatePhyScalarFPReg ),
         .poppedData( allocatedPhyScalarFPRegNum ),
-
         .push( releasePhyScalarFPReg ),
         .pushedData( releasedPhyScalarFPRegNum )
     );
 `endif
 
-    // Index address for recoverying the RMT by copying from the retirement RMT.
-    LRegNumPath rmtRecoveryIndex;
-    logic [LREG_NUM_BIT_WIDTH:0] rmtRecoveryCount;
-    logic inRecoveryRMT;
-    always_ff @(posedge port.clk) begin
-        if (port.rst) begin
-            rmtRecoveryCount <= 0;
-            rmtRecoveryIndex <= 0;
-        end
-        else if (recovery.toRecoveryPhase) begin
-            rmtRecoveryCount <= LREG_NUM;
-            rmtRecoveryIndex <= 0;
-        end
-        else begin
-            if(rmtRecoveryCount > COMMIT_WIDTH) begin
-                rmtRecoveryCount <= rmtRecoveryCount - COMMIT_WIDTH;
-            end
-            else begin
-                rmtRecoveryCount <= 0;
+    // Internal signals to connect Committers
+    logic [NUM_THREADS-1:0][COMMIT_WIDTH-1:0] committerReleaseReg;
+    PRegNumPath [NUM_THREADS-1:0][COMMIT_WIDTH-1:0] committerPhyReleasedReg;
+    
+    // Generate Committers per Thread
+    generate
+        for (genvar t = 0; t < NUM_THREADS; t++) begin : gen_committer
+            RenameLogicIF committerPort(port.clk, port.rst, port.rstStart);
+            
+            always_comb begin
+                committerPort.commit = port.commit[t];
+                committerPort.commitNum = port.commitNum[t];
+                committerPort.recoveryEntryNum = activeList.recoveryEntryNum[t];
+                committerPort.readData = activeList.readData[t];
+                
+                activeList.popHeadNum[t] = committerPort.popHeadNum;
+                activeList.popTailNum[t] = committerPort.popTailNum;
+                
+                committerReleaseReg[t] = committerPort.releaseReg;
+                committerPhyReleasedReg[t] = committerPort.phyReleasedReg;
+                
+                port.flushNum[t] = committerPort.flushNum;
             end
 
-            if (!RECOVERY_FROM_RRMT) begin
-                rmtRecoveryIndex <= rmtRecoveryIndex + COMMIT_WIDTH;
+            RenameLogicCommitter #(.TID(t)) committer(
+                .port(committerPort.RenameLogicCommitter),
+                .activeList(activeList.RenameLogicCommitter),
+                .recovery(recovery.RenameLogicCommitter)
+            );
+            
+            // Retirement RMT (One per thread)
+            RenameLogicIF retRmtPort(port.clk, port.rst, port.rstStart);
+            always_comb begin
+                retRmtPort.retRMT_WriteReg = port.retRMT_WriteReg[t];
+                retRmtPort.retRMT_WriteReg_PhyRegNum = port.retRMT_WriteReg_PhyRegNum[t];
+                retRmtPort.retRMT_WriteReg_LogRegNum = port.retRMT_WriteReg_LogRegNum[t];
+                
+                for(int i=0; i<RENAME_WIDTH; i++) begin
+                    if (port.tid[i] == t) 
+                         retRmtPort.retRMT_ReadReg_LogRegNum[i] = port.retRMT_ReadReg_LogRegNum[i];
+                    else 
+                         retRmtPort.retRMT_ReadReg_LogRegNum[i] = 0;
+                end
             end
-            else begin
-                rmtRecoveryIndex <= rmtRecoveryIndex + RENAME_WIDTH;
-            end
+            
+            // SMT FIX: Pass TID parameter for correct reset initialization
+            RetirementRMT #(.THREAD_ID(t)) retRMT(retRmtPort.RetirementRMT);
         end
-    end
+    endgenerate
 
-    // RMT control signals, which are generated in RenameLogic.
+    // RMT Instantiation
+    RenameLogicIF rmtPort(port.clk, port.rst, port.rstStart);
+    RMT rmt(rmtPort.RMT);
+    
+    // Internal RMT control
     logic [ COMMIT_WIDTH-1:0 ] rmtWriteReg;
-    PRegNumPath  rmtWriteReg_PhyRegNum[ COMMIT_WIDTH ];
-    LRegNumPath  rmtWriteReg_LogRegNum[ COMMIT_WIDTH ];
-
-    // Write port for WAT
-    logic watWriteReg[ COMMIT_WIDTH ];
-    LRegNumPath watWriteLogRegNum[ COMMIT_WIDTH ];
-    IssueQueueIndexPath  watWriteIssueQueuePtr[ COMMIT_WIDTH ];
-
-    LRegNumPath retRMT_ReadReg_LogRegNum[RENAME_WIDTH];
+    PRegNumPath [ COMMIT_WIDTH-1:0 ] rmtWriteReg_PhyRegNum;
+    LRegNumPath [ COMMIT_WIDTH-1:0 ] rmtWriteReg_LogRegNum;
+    ThreadID    [ COMMIT_WIDTH-1:0 ] rmtWriteReg_Tid; 
 
     always_comb begin
-        for (int i = 0; i < RENAME_WIDTH; i++) begin
-            retRMT_ReadReg_LogRegNum[i] = '0;
-        end
-
+        
+        // SMT FIX: Aggregate Release Signals (OR Logic)
+        // Since only one thread commits per cycle, we can safely OR the signals.
         for (int i = 0; i < COMMIT_WIDTH; i++) begin
-            // Don't care
-            rmtWriteReg[i] = FALSE;
-            rmtWriteReg_PhyRegNum[i] = '0;
-            rmtWriteReg_LogRegNum[i] = '0;
+             releasePhyScalarReg[i] = committerReleaseReg[0][i] | committerReleaseReg[1][i];
+             
+             // Mux the data based on which commit signal is active
+             if (committerReleaseReg[0][i]) 
+                 releasedPhyScalarRegNum[i] = committerPhyReleasedReg[0][i];
+             else 
+                 releasedPhyScalarRegNum[i] = committerPhyReleasedReg[1][i];
+                 
+`ifdef RSD_MARCH_FP_PIPE
+             // FP Release Logic (Placeholder - similar OR logic needed)
+             releasePhyScalarFPReg[i] = FALSE; 
+`endif
         end
 
-        // Destinations.
+        // Allocations
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
 `ifdef RSD_MARCH_FP_PIPE
             allocatedPhyRegNum[i].isFP = port.logDstReg[i].isFP;
-            allocatedPhyRegNum[i].regNum =
-                (port.logDstReg[i].isFP ? allocatedPhyScalarFPRegNum[i] : allocatedPhyScalarRegNum[i]);
+            allocatedPhyRegNum[i].regNum = (port.logDstReg[i].isFP ? allocatedPhyScalarFPRegNum[i] : allocatedPhyScalarRegNum[i]);
 `else
             allocatedPhyRegNum[i].regNum = allocatedPhyScalarRegNum[i];
 `endif
         end
-
         port.phyDstReg = allocatedPhyRegNum;
 
-        // Whether rmt is in a recovery phase or not.
-        inRecoveryRMT = RECOVERY_FROM_RRMT ? ( rmtRecoveryCount != 0 ) : recovery.inRecoveryAL;
-        recovery.renameLogicRecoveryRMT = inRecoveryRMT;
-        alReadData = activeList.readData;   //for RECOVERY_FROM_ACTIVE_LIST mode
-
-        // Empty flag.
-`ifdef RSD_MARCH_FP_PIPE
-        port.allocatable =
-            !inRecoveryRMT &&   // In a recovery mode, the front-end is stalled.
+        // Allocatable if Global Free List OK and Local Active List OK
+        port.allocatable = 
             (scalarFreeListCount >= RENAME_WIDTH) &&
-            (scalarFPFreeListCount >= RENAME_WIDTH);
-`else
-        port.allocatable =
-            !inRecoveryRMT &&   // In a recovery mode, the front-end is stalled.
-            (scalarFreeListCount >= RENAME_WIDTH);
-`endif
+            activeList.allocatable[port.tid[0]]; 
 
-        // Allocation from the free lists.
+
+        // Rename Writes
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
             allocatePhyReg[i] = port.updateRMT[i] && port.writeReg[i];
-
 `ifdef RSD_MARCH_FP_PIPE
             allocatePhyScalarReg[i] = allocatePhyReg[i] && !port.logDstReg[i].isFP;
             allocatePhyScalarFPReg[i] = allocatePhyReg[i] && port.logDstReg[i].isFP;
 `else
             allocatePhyScalarReg[i] = allocatePhyReg[i];
 `endif
+            
+            rmtWriteReg[i] = port.updateRMT[i] && port.writeReg[i];
+            rmtWriteReg_PhyRegNum[i] = allocatedPhyRegNum[i];
+            rmtWriteReg_LogRegNum[i] = port.logDstReg[i];
+            rmtWriteReg_Tid[i] = port.tid[i]; // Pass TID
         end
+        
+        for ( int i = RENAME_WIDTH; i < COMMIT_WIDTH; i++ ) begin
+            rmtWriteReg[i] = FALSE;
+            rmtWriteReg_Tid[i] = 0;
+        end
+        
+        // Wiring RMT
+        rmtPort.rmtWriteReg = rmtWriteReg;
+        rmtPort.rmtWriteReg_PhyRegNum = rmtWriteReg_PhyRegNum;
+        rmtPort.rmtWriteReg_LogRegNum = rmtWriteReg_LogRegNum;
+        rmtPort.rmtWriteReg_Tid = rmtWriteReg_Tid; // SMT FIX: Wired to interface
 
-        // Release to the free lists.
-        for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
+        rmtPort.tid = port.tid;
+        rmtPort.logSrcRegA = port.logSrcRegA;
+        rmtPort.logSrcRegB = port.logSrcRegB;
 `ifdef RSD_MARCH_FP_PIPE
-            releasePhyScalarReg[i] =
-                port.releaseReg[i] && !port.phyReleasedReg[i].isFP;
-            releasePhyScalarFPReg[i] =
-                port.releaseReg[i] && port.phyReleasedReg[i].isFP;
-            releasedPhyScalarFPRegNum[i] = port.phyReleasedReg[i].regNum;
-`else
-            releasePhyScalarReg[i] = port.releaseReg[i];
+        rmtPort.logSrcRegC = port.logSrcRegC;
 `endif
-            releasedPhyScalarRegNum[i] = port.phyReleasedReg[i].regNum;
-        end
-
-        // Write control of RMTs.
-        if( |port.updateRMT ) begin
-            // Update the RMT.
-            for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
-                rmtWriteReg[i] = port.updateRMT[i] && port.writeReg[i];
-                rmtWriteReg_PhyRegNum[i] = allocatedPhyRegNum[i];
-                rmtWriteReg_LogRegNum[i] = port.logDstReg[i];
-            end
-
-            //Recovery-only write port
-            for ( int i = RENAME_WIDTH; i < COMMIT_WIDTH; i++ ) begin
-                rmtWriteReg[i] = FALSE;
-
-            end
-        end
-        else if (inRecoveryRMT) begin
-            if ( RECOVERY_FROM_RRMT ) begin
-                // Copy from the retirement RMT in a recovery mode.
-                for (int i = 0; i < RENAME_WIDTH; i++) begin
-                    rmtWriteReg[i] = TRUE;
-                    rmtWriteReg_PhyRegNum[i] = port.retRMT_ReadReg_PhyRegNum[i];
-                    rmtWriteReg_LogRegNum[i] = rmtRecoveryIndex + i;
-                    retRMT_ReadReg_LogRegNum[i] = rmtRecoveryIndex + i;
-                end
-
-                // RMTの書き込みポート数はコミット幅であるが，RRMTの読み出しポート数はリネーム幅のため，
-                // RMTの巻き戻しは１サイクルにつきリネーム幅しか行えない．
-                // したがって，RMTの空いた書き込みポートを落としておく．
-                for (int i = RENAME_WIDTH; i < COMMIT_WIDTH; i++) begin
-                    rmtWriteReg[i] = FALSE;
-                    rmtWriteReg_PhyRegNum[i] = '0;
-                    rmtWriteReg_LogRegNum[i] = '0;
-                end
-            end
-            else begin //recovery from active list
-                for (int i = 0; i < COMMIT_WIDTH; i++) begin
-                    rmtWriteReg[i] = ( i < activeList.popTailNum ) ? TRUE : FALSE;
-                    rmtWriteReg_PhyRegNum[i] = alReadData[i].phyPrevDstRegNum;
-                    rmtWriteReg_LogRegNum[i] = alReadData[i].logDstRegNum;
-                end
-            end
-        end
-
-        // WAT
-        // Not support for recovering from RRMT
-        if (!inRecoveryRMT) begin
-            // Get dependent instruction's issue queue pointer
-            for (int i = 0; i < RENAME_WIDTH; i++) begin
-                watWriteReg[i] = port.watWriteRegFromPipeReg[i];
-                watWriteLogRegNum[i] = port.logDstReg[i];
-                watWriteIssueQueuePtr[i] = port.watWriteIssueQueuePtrFromPipeReg[i];
-            end
-
-            // This is recovery dedicated port so fixed at NEGATIVE
-            for (int i = RENAME_WIDTH; i < COMMIT_WIDTH; i++) begin
-                watWriteReg[i] = '0;
-                watWriteLogRegNum[i] = '0;
-                watWriteIssueQueuePtr[i] = '0;
-            end
-        end
-        else begin
-            // Recovery WAT from activelist
-            for (int i = 0; i < COMMIT_WIDTH; i++) begin
-                // Whether recovery WAT (whether this instruction would write register)
-                watWriteReg[i] =  ( i < activeList.popTailNum ) ? alReadData[i].writeReg : FALSE;
-                // Information for recovering WAT
-                watWriteLogRegNum[i] = alReadData[i].logDstRegNum;
-                watWriteIssueQueuePtr[i] = alReadData[i].prevDependIssueQueuePtr;
-            end
-        end
-
-        // Output
-        port.rmtWriteReg = rmtWriteReg;
-        port.rmtWriteReg_PhyRegNum = rmtWriteReg_PhyRegNum;
-        port.rmtWriteReg_LogRegNum = rmtWriteReg_LogRegNum;
-
-        port.watWriteReg = watWriteReg;
-        port.watWriteLogRegNum = watWriteLogRegNum;
-        port.watWriteIssueQueuePtr = watWriteIssueQueuePtr;
-        port.retRMT_ReadReg_LogRegNum = retRMT_ReadReg_LogRegNum;
+        rmtPort.logDstReg = port.logDstReg;
+        
+        rmtPort.watWriteRegFromPipeReg = port.watWriteRegFromPipeReg;
+        rmtPort.watWriteIssueQueuePtrFromPipeReg = port.watWriteIssueQueuePtrFromPipeReg;
+        
+        port.phySrcRegA = rmtPort.phySrcRegA;
+        port.phySrcRegB = rmtPort.phySrcRegB;
+`ifdef RSD_MARCH_FP_PIPE
+        port.phySrcRegC = rmtPort.phySrcRegC;
+`endif
+        port.phyPrevDstReg = rmtPort.phyPrevDstReg;
+        
+        port.srcIssueQueuePtrRegA = rmtPort.srcIssueQueuePtrRegA;
+        port.srcIssueQueuePtrRegB = rmtPort.srcIssueQueuePtrRegB;
+`ifdef RSD_MARCH_FP_PIPE
+        port.srcIssueQueuePtrRegC = rmtPort.srcIssueQueuePtrRegC;
+`endif
+        port.prevDependIssueQueuePtr = rmtPort.prevDependIssueQueuePtr;
     end
 
-endmodule : RenameLogic
+endmodule

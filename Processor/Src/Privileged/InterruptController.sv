@@ -3,7 +3,7 @@
 
 
 //
-// CSR Unit
+// Interrupt Controller (SMT)
 //
 
 `include "BasicMacros.sv"
@@ -18,12 +18,15 @@ module InterruptController(
     NextPCStageIF.InterruptController fetchStage,
     RecoveryManagerIF.InterruptController recoveryManager
 );
-    logic reqInterrupt, triggerInterrupt;
-    logic reqTimerInterrupt, reqExternalInterrupt;
-    CSR_CAUSE_InterruptCodePath interruptCode;
-    PC_Path interruptTargetAddr;
-    CSR_BodyPath csrReg;
-    InterruptCodeConvPath interruptCodeConv;
+    logic reqInterrupt[NUM_THREADS];
+    logic triggerInterrupt[NUM_THREADS];
+    logic reqTimerInterrupt[NUM_THREADS];
+    logic reqExternalInterrupt[NUM_THREADS];
+    
+    CSR_CAUSE_InterruptCodePath interruptCode[NUM_THREADS];
+    PC_Path interruptTargetAddr[NUM_THREADS];
+    CSR_BodyPath csrReg[NUM_THREADS];
+    InterruptCodeConvPath interruptCodeConv[NUM_THREADS];
 
     `RSD_STATIC_ASSERT(
         RSD_EXTERNAL_INTERRUPT_CODE_WIDTH == CSR_CAUSE_INTERRUPT_CODE_WIDTH,
@@ -31,48 +34,54 @@ module InterruptController(
     );
 
     always_comb begin
-        csrReg = csrUnit.csrWholeOut;
-
-        reqTimerInterrupt =     csrReg.mie.MTIE && csrReg.mip.MTIP;
-        reqExternalInterrupt =  csrReg.mie.MEIE && csrReg.mip.MEIP;
-
-        reqInterrupt = csrReg.mstatus.MIE && (reqTimerInterrupt || reqExternalInterrupt);
-        interruptCodeConv.exCode = csrUnit.externalInterruptCodeInCSR; // Type conversion through union
-        if (reqTimerInterrupt) begin
-            // Timer has higher priority.
-            interruptCode = CSR_CAUSE_INTERRUPT_CODE_TIMER;
-        end
-        else begin
-            interruptCode = interruptCodeConv.csrCode;
-        end
-
-        // パイプライン全体が空になるまでフェッチをとめる        
-        ctrl.npStageSendBubbleLowerForInterrupt =
-            reqInterrupt;
         
-        // * パイプライン全体が空になったら割り込みをかける
-        // * パイプラインが空でもリカバリマネージャが PC を書き換えている途中の
-        //   可能性があるため，きちんと待つ必要がある
-        // * reqInterrupt は csrReg のみをみて決定しているので，
-        //   要求を出したことによって，CSR 内で MIE が落とされてループするということは
-        //   ないはず
-        triggerInterrupt = 
-            ctrl.wholePipelineEmpty && 
-            !recoveryManager.unableToStartRecovery && 
-            reqInterrupt;
+        // SMT Loop
+        for(int t=0; t<NUM_THREADS; t++) begin
+            csrReg[t] = csrUnit.csrWholeOut[t];
 
-        csrUnit.triggerInterrupt = triggerInterrupt;
-        csrUnit.interruptRetAddr = fetchStage.pcOut;
-        csrUnit.interruptCode = interruptCode;
+            reqTimerInterrupt[t] =     csrReg[t].mie.MTIE && csrReg[t].mip.MTIP;
+            reqExternalInterrupt[t] =  csrReg[t].mie.MEIE && csrReg[t].mip.MEIP;
 
-        interruptTargetAddr = ToPC_FromAddr({
-            (csrReg.mtvec.mode == CSR_MTVEC_MODE_VECTORED) ? 
-                (csrReg.mtvec.base + interruptCode) : csrReg.mtvec.base, 
-            CSR_MTVEC_BASE_PADDING
-        });
+            reqInterrupt[t] = csrReg[t].mstatus.MIE && (reqTimerInterrupt[t] || reqExternalInterrupt[t]);
+            
+            interruptCodeConv[t].exCode = csrUnit.externalInterruptCodeInCSR[t]; 
+            
+            if (reqTimerInterrupt[t]) begin
+                // Timer has higher priority.
+                interruptCode[t] = CSR_CAUSE_INTERRUPT_CODE_TIMER;
+            end
+            else begin
+                interruptCode[t] = interruptCodeConv[t].csrCode;
+            end
 
-        fetchStage.interruptAddrWE = triggerInterrupt;
-        fetchStage.interruptAddrIn = interruptTargetAddr;
+            // Interrupt Trigger Logic
+            // Only trigger if pipeline is empty AND recovery is done.
+            // SMT Note 'ctrl.wholePipelineEmpty' might be global. 
+            // If so, both threads wait for total empty. 
+            triggerInterrupt[t] = 
+                ctrl.wholePipelineEmpty && 
+                !recoveryManager.unableToStartRecovery[t] && 
+                reqInterrupt[t];
+
+            csrUnit.triggerInterrupt[t] = triggerInterrupt[t];
+            // Assumption: PC Out is arrayed in FetchStage
+            csrUnit.interruptRetAddr[t] = fetchStage.pcOut[t]; 
+            csrUnit.interruptCode[t] = interruptCode[t];
+
+            interruptTargetAddr[t] = ToPC_FromAddr({
+                (csrReg[t].mtvec.mode == CSR_MTVEC_MODE_VECTORED) ? 
+                    (csrReg[t].mtvec.base + interruptCode[t]) : csrReg[t].mtvec.base, 
+                CSR_MTVEC_BASE_PADDING
+            });
+
+            // Drive Fetch Stage Inputs (Arrayed)
+            fetchStage.interruptAddrWE[t] = triggerInterrupt[t];
+            fetchStage.interruptAddrIn[t] = interruptTargetAddr[t];
+        end
+        
+        // Bubble Request (Aggregate)
+        ctrl.npStageSendBubbleLowerForInterrupt =
+            reqInterrupt[0] || reqInterrupt[1];
     end
 
 endmodule

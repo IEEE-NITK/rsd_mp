@@ -166,6 +166,9 @@ typedef struct packed // LoadQueueEntry
 
     // Addr for memory dependent predictor.
     PC_Path pc;
+    
+    // SMT: Thread ID
+    ThreadID tid;
 } LoadQueueEntry;
 
 typedef struct packed // StoreQueueAddrEntry
@@ -181,6 +184,9 @@ typedef struct packed // StoreQueueAddrEntry
     // Write enable signals.
     LSQ_BlockWordEnablePath wordWE;
     LSQ_WordByteEnablePath byteWE;
+    
+    // SMT: Thread ID
+    ThreadID tid;
 } StoreQueueAddrEntry;
 
 typedef struct packed // StoreQueueDataEntry
@@ -195,5 +201,3 @@ typedef struct packed // StoreQueueDataEntry
 
 
 endpackage
-
-

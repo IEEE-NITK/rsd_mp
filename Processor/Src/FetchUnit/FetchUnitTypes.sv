@@ -41,6 +41,7 @@ typedef logic [BTB_QUEUE_SIZE_BIT_WIDTH-1:0] BTBQueuePointerPath;
 typedef struct packed // struct BTB_Entry
 {
     logic valid;
+    ThreadID tid;               // SMT CHANGE: Tag entry with ThreadID
     logic [BTB_TAG_WIDTH-1:0] tag;
     BTB_AddrPath data;
     logic isCondBr;
@@ -123,6 +124,7 @@ typedef struct packed // struct BranchResult
 {
     PC_Path brAddr;     // The address of a executed branch.
     PC_Path nextAddr;   // The next address of a executed branch.
+    ThreadID tid;       // Thread ID of the branch
     logic execTaken;    // The execution result of a branch's direction.
     logic predTaken;    // The prediction result of a branch's direction.
     logic isCondBr;     // Whether this branch is conditional one or not.
@@ -136,6 +138,7 @@ typedef struct packed // struct BranchResult
 typedef struct packed // struct BranchPred
 {
     PC_Path predAddr;            // Predicted address
+    ThreadID tid;                // Thread ID for prediction
     logic predTaken;                        // result of bpred
     
     BranchGlobalHistoryPath globalHistory;  // The global history of branches.

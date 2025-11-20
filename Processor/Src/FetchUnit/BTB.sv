@@ -32,6 +32,10 @@ module BTB(
     PC_Path [FETCH_WIDTH-1 : 0] tagReg;
     PC_Path [FETCH_WIDTH-1 : 0] nextTagReg;
     
+    // SMT CHANGE: We need to know which thread fetched this data to validate the tag
+    ThreadID [FETCH_WIDTH-1 : 0] fetchTidReg;
+    ThreadID [FETCH_WIDTH-1 : 0] nextFetchTidReg;
+
     logic pushBtbQueue, popBtbQueue;
     logic full, empty;
 
@@ -84,9 +88,11 @@ module BTB(
         
         if (port.rst) begin
             tagReg <= '0;
+            fetchTidReg <= '0; // SMT CHANGE: Reset TID reg
         end
         else begin
             tagReg <= nextTagReg;
+            fetchTidReg <= nextFetchTidReg; // SMT CHANGE: Pipeline the TID
         end
     end
 
@@ -111,11 +117,17 @@ module BTB(
         for (int i = 0; i < FETCH_WIDTH; i++) begin
             btbRA[i] = ToBTB_Index(pcIn + i*INSN_BYTE_WIDTH);
             nextTagReg[i] = pcIn + i*INSN_BYTE_WIDTH;
+            // SMT CHANGE: Capture the thread ID active during this fetch
+            nextFetchTidReg[i] = port.fetchThreadID; 
         end
             
         // Make logic for using at other module.
         for (int i = 0; i < FETCH_WIDTH; i++) begin
-            btbHit[i] = btbRV[i].valid && (btbRV[i].tag == ToBTB_Tag(tagReg[i]));
+            // SMT CHANGE: Check TID match in addition to Tag match
+            btbHit[i] = btbRV[i].valid && 
+                        (btbRV[i].tag == ToBTB_Tag(tagReg[i])) && 
+                        (btbRV[i].tid == fetchTidReg[i]);
+
             btbOut[i] = ToRawAddrFromBTB_Addr(btbRV[i].data, tagReg[i]);
             readIsCondBr[i] = btbRV[i].isCondBr;
         end
@@ -139,6 +151,8 @@ module BTB(
 
             btbWA[i] = ToBTB_Index(port.brResult[i].brAddr);
             btbWV[i].tag = ToBTB_Tag(port.brResult[i].brAddr);
+            // SMT CHANGE: Store the TID in the BTB Entry
+            btbWV[i].tid = port.brResult[i].tid; 
             btbWV[i].data = ToBTB_Addr(port.brResult[i].nextAddr);
             btbWV[i].valid = TRUE;
             btbWV[i].isCondBr = port.brResult[i].isCondBr;
@@ -163,6 +177,7 @@ module BTB(
                 btbWE[i] = (i == 0) ? TRUE : FALSE;
                 btbWA[i] = resetIndex;
                 btbWV[i].tag = 0;
+                btbWV[i].tid = 0; // SMT CHANGE: Init TID
                 btbWV[i].data = 0;
                 btbWV[i].valid = FALSE;
             end

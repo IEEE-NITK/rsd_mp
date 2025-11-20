@@ -67,6 +67,7 @@ module MemoryExecutionStage(
 
     MemIssueQueueEntry iqData[MEM_ISSUE_WIDTH];
     MemOpInfo memOpInfo  [ MEM_ISSUE_WIDTH ];
+    ThreadID opTid [ MEM_ISSUE_WIDTH ];
 
     PRegDataPath  fuOpA  [ MEM_ISSUE_WIDTH ];
     PRegDataPath  fuOpB  [ MEM_ISSUE_WIDTH ];
@@ -89,11 +90,13 @@ module MemoryExecutionStage(
 
         for ( int i = 0; i < MEM_ISSUE_WIDTH; i++ ) begin
             iqData[i] = pipeReg[i].memQueueData;
+            opTid[i] = pipeReg[i].tid;
+
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         iqData[i].activeListPtr
                         );
             memOpInfo[i]  = iqData[i].memOpInfo;
@@ -114,7 +117,6 @@ module MemoryExecutionStage(
             bypass.memCtrlIn[i] = pipeReg[i].bCtrl;
 
             // Register valid bits.
-            // If invalid registers are read, regValid is negated and this op must be replayed.
             regValid[i] =
                 (memOpInfo[i].operandTypeA != OOT_REG || fuOpA[i].valid ) &&
                 (memOpInfo[i].operandTypeB != OOT_REG || fuOpB[i].valid );
@@ -123,14 +125,13 @@ module MemoryExecutionStage(
 
         for ( int i = 0; i < LOAD_ISSUE_WIDTH; i++ ) begin
             // --- DCache access
-            // TODO: メモリマップが MMT_MEMORY じゃなかったとしても，一度 MSHR を確保して
-            // しまった場合にはデータを受け取らないと行けないので，とりあえずどんな
-            // 領域にアクセスをするとしても DC からデータを拾うようにしておく
             loadStoreUnit.dcReadReq[i] =
                 !stall && !clear && pipeReg[i].valid && regValid[i] && !flush[i] &&
                 (memOpInfo[i].opType inside { MEM_MOP_TYPE_LOAD });
+            
+            // SMT: Pass TID to LSU for memory ordering checks
+            loadStoreUnit.dcReadTid[i] = opTid[i]; // Requires update to LoadStoreUnitIF
 
-            //loadStoreUnit.dcReadAddr[i] = addrOut[i];
             loadStoreUnit.dcReadAddr[i] = phyAddrOut[i];
 
             loadStoreUnit.dcReadUncachable[i] = isUncachable[i];
@@ -140,8 +141,9 @@ module MemoryExecutionStage(
 
         end
 
-        // FENCE.I (with ICache and DCache flush)
-        // FENCE.I must be issued to the lane 0;
+        // FENCE.I
+        // SMT: FENCE.I logic must check if current thread is executing FENCE
+        // NOTE: Cache flush is global. If one thread requests flush, we flush.
         cacheFlushReq = FALSE;
         if (pipeReg[0].valid && (memOpInfo[0].opType == MEM_MOP_TYPE_FENCE) && memOpInfo[0].isFenceI) begin
             cacheFlushReq = TRUE;
@@ -209,10 +211,6 @@ module MemoryExecutionStage(
                 memOpInfo[i].opType inside {MEM_MOP_TYPE_DIV};
 
             // Request to the divider
-            // NOT make a request when below situation
-            // 1) When any operands of inst. are invalid
-            // 2) When the divider is waiting for the instruction
-            //    to receive the result of the divider
             mulDivUnit.divReq[i] = 
                 mulDivUnit.divReserved[i] && 
                 pipeReg[i].valid && isDiv[i] && 
@@ -220,8 +218,6 @@ module MemoryExecutionStage(
         end
 
     end
-
-
 `endif
 
 
@@ -234,12 +230,12 @@ module MemoryExecutionStage(
     always_comb begin
         for ( int i = 0; i < MEM_ISSUE_WIDTH; i++ ) begin
             nextStage[i].memQueueData = pipeReg[i].memQueueData;
-            // if (pipeReg[i].memQueueData.memOpInfo.opType != MEM_MOP_TYPE_LOAD)
-            //     nextStage[i].memQueueData.hasAllocatedMSHR = FALSE;
-
+            
             // リセットorフラッシュ時はNOP
             nextStage[i].valid =
                 (stall || clear || port.rst || flush[i]) ? FALSE : pipeReg[i].valid;
+            
+            nextStage[i].tid = opTid[i];
             nextStage[i].condEnabled = TRUE;
             nextStage[i].dataIn = (i == 0 && isCSR) ? csrUnit.csrReadOut : fuOpB[i].data;   // CSR must be issued to the lane 0
             nextStage[i].addrOut = addrOut[i];

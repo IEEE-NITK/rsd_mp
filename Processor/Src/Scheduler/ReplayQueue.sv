@@ -126,10 +126,11 @@ module ReplayQueue(
     ReplayQueueIntervalPath nextIntervalCount;
 
     // Flushed Op detection
-    ReplayQueueCountPath canBeFlushedEntryCount;    //FlushedOpが存在している可能性があるエントリの個数
-    ActiveListIndexPath flushRangeHeadPtr;  //フラッシュされた命令の範囲のhead
-    ActiveListIndexPath flushRangeTailPtr;  //フラッシュされた命令の範囲のtail
-    logic flushAllInsns;
+    // SMT: Duplicated per thread to track independent flush progress
+    ReplayQueueCountPath canBeFlushedEntryCount[NUM_THREADS];    
+    ActiveListIndexPath flushRangeHeadPtr[NUM_THREADS];  
+    ActiveListIndexPath flushRangeTailPtr[NUM_THREADS];  
+    logic flushAllInsns[NUM_THREADS];
 
     logic flushInt[ INT_ISSUE_WIDTH ];
     logic flushMem[ MEM_ISSUE_WIDTH ];
@@ -375,72 +376,79 @@ module ReplayQueue(
         // There is a one-cycle delay for a flash range to be recorded in the registers, 
         // so it is necessary to detect flushed ops using both the range just received and 
         // the range recorded in the registers.
+        
+        // SMT Update: Iterate through lanes and check flush status using the TID of each op.
+        
         for (int i = 0; i < INT_ISSUE_WIDTH; i++) begin
+            ThreadID t = replayEntryOut.intData[i].tid;
             flushInt[i] = SelectiveFlushDetector(
-                                canBeFlushedEntryCount != 0,
-                                flushRangeHeadPtr,
-                                flushRangeTailPtr,
-                                flushAllInsns,
-                                replayEntryOut.intData[i].activeListPtr
-                            ) || 
-                            SelectiveFlushDetector(
-                                recovery.toRecoveryPhase,
-                                recovery.flushRangeHeadPtr,
-                                recovery.flushRangeTailPtr,
-                                recovery.flushAllInsns,
-                                replayEntryOut.intData[i].activeListPtr
-                            );
+                            canBeFlushedEntryCount[t] != 0,
+                            flushRangeHeadPtr[t],
+                            flushRangeTailPtr[t],
+                            flushAllInsns[t],
+                            replayEntryOut.intData[i].activeListPtr
+                        ) || 
+                        SelectiveFlushDetector(
+                            recovery.toRecoveryPhase[t],
+                            recovery.flushRangeHeadPtr[t],
+                            recovery.flushRangeTailPtr[t],
+                            recovery.flushAllInsns[t],
+                            replayEntryOut.intData[i].activeListPtr
+                        );
         end
 `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
         for (int i = 0; i < COMPLEX_ISSUE_WIDTH; i++) begin
+            ThreadID t = replayEntryOut.complexData[i].tid;
             flushComplex[i] = SelectiveFlushDetector(
-                                canBeFlushedEntryCount != 0,
-                                flushRangeHeadPtr,
-                                flushRangeTailPtr,
-                                flushAllInsns,
-                                replayEntryOut.complexData[i].activeListPtr
-                            ) || 
-                            SelectiveFlushDetector(
-                                recovery.toRecoveryPhase,
-                                recovery.flushRangeHeadPtr,
-                                recovery.flushRangeTailPtr,
-                                recovery.flushAllInsns,
-                                replayEntryOut.complexData[i].activeListPtr
-                            );
+                            canBeFlushedEntryCount[t] != 0,
+                            flushRangeHeadPtr[t],
+                            flushRangeTailPtr[t],
+                            flushAllInsns[t],
+                            replayEntryOut.complexData[i].activeListPtr
+                        ) || 
+                        SelectiveFlushDetector(
+                            recovery.toRecoveryPhase[t],
+                            recovery.flushRangeHeadPtr[t],
+                            recovery.flushRangeTailPtr[t],
+                            recovery.flushAllInsns[t],
+                            replayEntryOut.complexData[i].activeListPtr
+                        );
         end
 `endif
         for (int i = 0; i < MEM_ISSUE_WIDTH; i++) begin
+            ThreadID t = replayEntryOut.memData[i].tid;
             flushMem[i] = SelectiveFlushDetector(
-                                canBeFlushedEntryCount != 0,
-                                flushRangeHeadPtr,
-                                flushRangeTailPtr,
-                                flushAllInsns,
-                                replayEntryOut.memData[i].activeListPtr
-                            ) || 
-                            SelectiveFlushDetector(
-                                recovery.toRecoveryPhase,
-                                recovery.flushRangeHeadPtr,
-                                recovery.flushRangeTailPtr,
-                                recovery.flushAllInsns,
-                                replayEntryOut.memData[i].activeListPtr
-                            );
+                            canBeFlushedEntryCount[t] != 0,
+                            flushRangeHeadPtr[t],
+                            flushRangeTailPtr[t],
+                            flushAllInsns[t],
+                            replayEntryOut.memData[i].activeListPtr
+                        ) || 
+                        SelectiveFlushDetector(
+                            recovery.toRecoveryPhase[t],
+                            recovery.flushRangeHeadPtr[t],
+                            recovery.flushRangeTailPtr[t],
+                            recovery.flushAllInsns[t],
+                            replayEntryOut.memData[i].activeListPtr
+                        );
         end
 `ifdef RSD_MARCH_FP_PIPE
         for (int i = 0; i < FP_ISSUE_WIDTH; i++) begin
+            ThreadID t = replayEntryOut.fpData[i].tid;
             flushFP[i] = SelectiveFlushDetector(
-                                canBeFlushedEntryCount != 0,
-                                flushRangeHeadPtr,
-                                flushRangeTailPtr,
-                                flushAllInsns,
-                                replayEntryOut.fpData[i].activeListPtr
-                            ) || 
-                            SelectiveFlushDetector(
-                                recovery.toRecoveryPhase,
-                                recovery.flushRangeHeadPtr,
-                                recovery.flushRangeTailPtr,
-                                recovery.flushAllInsns,
-                                replayEntryOut.fpData[i].activeListPtr
-                            );
+                            canBeFlushedEntryCount[t] != 0,
+                            flushRangeHeadPtr[t],
+                            flushRangeTailPtr[t],
+                            flushAllInsns[t],
+                            replayEntryOut.fpData[i].activeListPtr
+                        ) || 
+                        SelectiveFlushDetector(
+                            recovery.toRecoveryPhase[t],
+                            recovery.flushRangeHeadPtr[t],
+                            recovery.flushRangeTailPtr[t],
+                            recovery.flushAllInsns[t],
+                            replayEntryOut.fpData[i].activeListPtr
+                        );
         end
 `endif
 
@@ -632,21 +640,32 @@ module ReplayQueue(
 
     always_ff @(posedge port.clk) begin
         if (port.rst) begin
-            canBeFlushedEntryCount <= 0;
+            for(int t=0; t<NUM_THREADS; t++) begin
+                canBeFlushedEntryCount[t] <= 0;
+            end
         end
-        else if (recovery.toRecoveryPhase) begin
-            canBeFlushedEntryCount <= count;
-            flushRangeHeadPtr <= recovery.flushRangeHeadPtr;
-            flushRangeTailPtr <= recovery.flushRangeTailPtr;
-            flushAllInsns <= recovery.flushAllInsns;
-        end
-        else if (canBeFlushedEntryCount > 0 && replayReg) begin
-            canBeFlushedEntryCount <= canBeFlushedEntryCount - 1;
+        else begin
+            for(int t=0; t<NUM_THREADS; t++) begin
+                if (recovery.toRecoveryPhase[t]) begin
+                    canBeFlushedEntryCount[t] <= count; // Conservative estimate
+                    flushRangeHeadPtr[t] <= recovery.flushRangeHeadPtr[t];
+                    flushRangeTailPtr[t] <= recovery.flushRangeTailPtr[t];
+                    flushAllInsns[t] <= recovery.flushAllInsns[t];
+                end
+                else if (canBeFlushedEntryCount[t] > 0 && replayReg) begin
+                    canBeFlushedEntryCount[t] <= canBeFlushedEntryCount[t] - 1;
+                end
+            end
         end
     end
 
     always_comb begin
-        recovery.replayQueueFlushedOpExist = (canBeFlushedEntryCount != 0);
+        // SMT: Global stall signal if ANY thread has a flushed op pending.
+        // Conservative safety mechanism.
+        recovery.replayQueueFlushedOpExist = FALSE;
+        for(int t=0; t<NUM_THREADS; t++) begin
+             if(canBeFlushedEntryCount[t] != 0) recovery.replayQueueFlushedOpExist = TRUE;
+        end
     end
 
 endmodule : ReplayQueue

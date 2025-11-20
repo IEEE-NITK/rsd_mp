@@ -58,6 +58,7 @@ module FPRegisterReadStage(
     logic flush[ FP_ISSUE_WIDTH ];
     FPIssueQueueEntry iqData[FP_ISSUE_WIDTH];
     FPOpInfo          fpOpInfo [FP_ISSUE_WIDTH];
+    ThreadID          opTid [FP_ISSUE_WIDTH];
     
     PRegDataPath operandA [ FP_ISSUE_WIDTH ];
     PRegDataPath operandB [ FP_ISSUE_WIDTH ];
@@ -75,19 +76,19 @@ module FPRegisterReadStage(
             fpOpInfo[i]  = pipeReg[i].fpQueueData.fpOpInfo;
             opSrc[i] = iqData[i].opSrc;
             opDst[i] = iqData[i].opDst;
+            
+            // SMT: Extract TID from pipeline register
+            opTid[i] = pipeReg[i].tid;
 
             //
             // To the register file.
             //
-
             registerFile.fpSrcRegNumA[i] = opSrc[i].phySrcRegNumA;
             registerFile.fpSrcRegNumB[i] = opSrc[i].phySrcRegNumB;
             registerFile.fpSrcRegNumC[i] = opSrc[i].phySrcRegNumC;
 
             //
             // To the bypass network.
-            // ストールやフラッシュの制御は，Bypass モジュールの内部で
-            // コントローラの信号を参照して行われている
             //
             bypass.fpPhySrcRegNumA[i] = opSrc[i].phySrcRegNumA;
             bypass.fpPhySrcRegNumB[i] = opSrc[i].phySrcRegNumB;
@@ -115,15 +116,19 @@ module FPRegisterReadStage(
             `endif
 
             // リセットorフラッシュ時はNOP
+            // SMT: Check flush using specific Thread ID
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase,
-                        recovery.flushRangeHeadPtr,
-                        recovery.flushRangeTailPtr,
-                        recovery.flushAllInsns,
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
                         iqData[i].activeListPtr
                         );
             nextStage[i].valid =
                 (stall || clear || port.rst || flush[i]) ? FALSE : pipeReg[i].valid;
+            
+            // SMT: Pass TID to next stage
+            nextStage[i].tid = opTid[i];
 
             nextStage[i].replay = pipeReg[i].replay;
 

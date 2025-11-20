@@ -51,6 +51,7 @@ module ComplexIntegerExecutionStage(
 `endif
 
         logic valid;  // Valid flag. If this is 0, its op is treated as NOP.
+        ThreadID tid; // SMT: Track TID in local pipeline
         logic regValid; // Valid flag of a destination register.
         ComplexIssueQueueEntry complexQueueData;
     } LocalPipeReg;
@@ -118,6 +119,7 @@ module ComplexIntegerExecutionStage(
     ComplexOpInfo          complexOpInfo [ COMPLEX_ISSUE_WIDTH ];
     MulOpSubInfo           mulSubInfo    [ COMPLEX_ISSUE_WIDTH ];
     DivOpSubInfo           divSubInfo    [ COMPLEX_ISSUE_WIDTH ];
+    ThreadID               opTid         [ COMPLEX_ISSUE_WIDTH ];
 
     PRegDataPath  fuOpA    [ COMPLEX_ISSUE_WIDTH ];
     PRegDataPath  fuOpB    [ COMPLEX_ISSUE_WIDTH ];
@@ -150,18 +152,7 @@ module ComplexIntegerExecutionStage(
             mulDivUnit.mulGetUpper[i] = mulSubInfo[i].mulGetUpper;
             mulDivUnit.mulCode[i] = mulSubInfo[i].mulCode;
 
-            // DIV
-            mulDivUnit.divCode[i] = divSubInfo[i].divCode;
-
-            mulDivUnit.dataInA[i] = fuOpA[i].data;
-            mulDivUnit.dataInB[i] = fuOpB[i].data;
-
-
             // Request to the divider
-            // NOT make a request when below situation
-            // 1) When any operands of inst. are invalid
-            // 2) When the divider is waiting for the instruction
-            //    to receive the result of the divider
             mulDivUnit.divReq[i] = 
                 mulDivUnit.divReserved[i] && 
                 pipeReg[i].valid && isDiv[i] && 
@@ -192,24 +183,27 @@ module ComplexIntegerExecutionStage(
             complexOpInfo[i]  = pipeReg[i].complexQueueData.complexOpInfo;
             mulSubInfo[i]  = complexOpInfo[i].mulSubInfo;
             divSubInfo[i]  = complexOpInfo[i].divSubInfo;
-            
+            opTid[i] = pipeReg[i].tid; // SMT: Extract TID
 
             flush[i][0] = SelectiveFlushDetector(
-                recovery.toRecoveryPhase,
-                recovery.flushRangeHeadPtr,
-                recovery.flushRangeTailPtr,
-                recovery.flushAllInsns,
+                recovery.toRecoveryPhase[opTid[i]],
+                recovery.flushRangeHeadPtr[opTid[i]],
+                recovery.flushRangeTailPtr[opTid[i]],
+                recovery.flushAllInsns[opTid[i]],
                 pipeReg[i].complexQueueData.activeListPtr
             );
 
             // From local pipeline 
             for (int j = 1; j < COMPLEX_EXEC_STAGE_DEPTH; j++) begin 
                 iqData[i][j] = localPipeReg[i][j-1].complexQueueData; 
+                // SMT: Check TID from local pipe
+                ThreadID stageTid = localPipeReg[i][j-1].tid;
+
                 flush[i][j] = SelectiveFlushDetector( 
-                    recovery.toRecoveryPhase, 
-                    recovery.flushRangeHeadPtr, 
-                    recovery.flushRangeTailPtr, 
-                    recovery.flushAllInsns,
+                    recovery.toRecoveryPhase[stageTid], 
+                    recovery.flushRangeHeadPtr[stageTid], 
+                    recovery.flushRangeTailPtr[stageTid], 
+                    recovery.flushAllInsns[stageTid], 
                     localPipeReg[i][j-1].complexQueueData.activeListPtr 
                 );
             end
@@ -217,7 +211,7 @@ module ComplexIntegerExecutionStage(
             // オペランド
             fuOpA[i] = ( pipeReg[i].bCtrl.rA.valid ? bypass.complexSrcRegDataOutA[i] : pipeReg[i].operandA );
             fuOpB[i] = ( pipeReg[i].bCtrl.rB.valid ? bypass.complexSrcRegDataOutB[i] : pipeReg[i].operandB );
-           
+            
 
             
             //
@@ -281,6 +275,7 @@ module ComplexIntegerExecutionStage(
 `endif
 
             nextLocalPipeReg[i][0].valid = flush[i][0] ? FALSE : pipeReg[i].valid;
+            nextLocalPipeReg[i][0].tid = opTid[i]; // SMT: Pass TID
             nextLocalPipeReg[i][0].complexQueueData = pipeReg[i].complexQueueData;
 
             // Reg valid of local pipeline 
@@ -298,6 +293,7 @@ module ComplexIntegerExecutionStage(
                 nextLocalPipeReg[i][j].opId = localPipeReg[i][j-1].opId;
 `endif 
                 nextLocalPipeReg[i][j].valid = flush[i][j] ? FALSE : localPipeReg[i][j-1].valid;
+                nextLocalPipeReg[i][j].tid = localPipeReg[i][j-1].tid; // SMT: Propagate TID
                 nextLocalPipeReg[i][j].regValid = localPipeReg[i][j-1].regValid; 
                 nextLocalPipeReg[i][j].complexQueueData = localPipeReg[i][j-1].complexQueueData;
             end 
@@ -310,6 +306,7 @@ module ComplexIntegerExecutionStage(
                 = localPipeReg[i][COMPLEX_EXEC_STAGE_DEPTH-2].opId;
 `endif
 
+            nextStage[i].tid = localPipeReg[i][COMPLEX_EXEC_STAGE_DEPTH-2].tid; // SMT: Pass TID
             nextStage[i].complexQueueData
                 = localPipeReg[i][COMPLEX_EXEC_STAGE_DEPTH-2].complexQueueData;
 

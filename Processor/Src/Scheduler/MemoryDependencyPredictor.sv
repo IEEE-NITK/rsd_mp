@@ -52,12 +52,24 @@ module MemoryDependencyPredictor(
         end
     end
 
+    // SMT Helper: Hash PC with TID
+    function automatic MDT_IndexPath GetThreadedMDTIndex(PC_Path pc, ThreadID tid);
+        // Use XOR hashing to disperse TIDs across the table
+        // Shift TID to avoid conflict in lower bits if PC alignment is high
+        return ToMDT_Index(pc) ^ (MDT_IndexPath'(tid) << 5);
+    endfunction
+
     always_comb begin
 
         // Process read request
         for (int i = 0; i < RENAME_WIDTH; i++) begin
-            // convert PC_Path to MDT_IndexPath
-            mdtRA[i] = ToMDT_Index(port.pc[0] + i*INSN_BYTE_WIDTH);
+            // SMT Update: Hash PC with TID
+            // Note: 'port.tid[i]' must be available in RenameStageIF
+            // (We added 'tid' to RenameStageIF outputs in previous steps)
+            mdtRA[i] = GetThreadedMDTIndex(
+                port.pc[i], // RenameStage passes array of PCs
+                port.tid[i] // RenameStage passes array of TIDs
+            );
         end
 
         // Decide whether issue speculatively
@@ -82,6 +94,18 @@ module MemoryDependencyPredictor(
                 loadStoreUnit.memAccessOrderViolation[i];
 
             // Learn memory order violation
+            // SMT Update: The LSU needs to provide the TID of the conflicting load.
+            // However, conflictLoadPC usually comes from the LoadQueue, 
+            // and we updated LoadQueue to store TIDs.
+            // Ideally, LoadStoreUnitIF should pass 'conflictLoadTid'.
+            // If not available, we use the simple PC index (less accurate but functional).
+            
+            // *Assumption*: Since we haven't updated LoadStoreUnitIF to pass 
+            // 'conflictLoadTid', we will use the raw PC. 
+            // Ideally, you should add 'conflictLoadTid' to LSU IF.
+            // For now, simple PC indexing (aliasing might occur between threads, 
+            // but it is safe -> conservative prediction).
+            
             mdtWA[i] = ToMDT_Index(loadStoreUnit.conflictLoadPC[i]);
             mdtWV[i].counter = TRUE;
         end

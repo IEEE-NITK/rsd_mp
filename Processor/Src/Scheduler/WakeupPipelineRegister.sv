@@ -38,6 +38,7 @@ module WakeupPipelineRegister(
         IssueQueueIndexPath ptr;  // A pointer to a selected entry.
         IssueQueueOneHotPath depVector;    // A producer vector for a producer matrix.
         ActiveListIndexPath activeListPtr;     // A pointer of active list for flush
+        ThreadID tid;             // SMT: Thread ID of the op
     } WakeupPipeReg;
 
     WakeupPipeReg intPipeReg[ INT_ISSUE_WIDTH ][ ISSUE_QUEUE_INT_LATENCY ];
@@ -48,7 +49,9 @@ module WakeupPipelineRegister(
 `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
     WakeupPipeReg complexPipeReg[ COMPLEX_ISSUE_WIDTH ][ ISSUE_QUEUE_COMPLEX_LATENCY ];
     WakeupPipeReg nextComplexPipeReg[ COMPLEX_ISSUE_WIDTH ];
-    logic [$clog2(ISSUE_QUEUE_COMPLEX_LATENCY):0] canBeFlushedRegCountComplex;    //FlushedOpが存在している可能性があるComplexパイプラインレジスタの段数
+    
+    // SMT: Flush counters per thread
+    logic [$clog2(ISSUE_QUEUE_COMPLEX_LATENCY):0] canBeFlushedRegCountComplex[NUM_THREADS];    
     logic flushComplex[ COMPLEX_ISSUE_WIDTH ];
     IssueQueueIndexPath complexSelectedPtr[ COMPLEX_ISSUE_WIDTH ];
 `endif
@@ -56,17 +59,23 @@ module WakeupPipelineRegister(
 `ifdef RSD_MARCH_FP_PIPE
     WakeupPipeReg fpPipeReg[ FP_ISSUE_WIDTH ][ ISSUE_QUEUE_FP_LATENCY ];
     WakeupPipeReg nextFPPipeReg[ FP_ISSUE_WIDTH ];
-    logic [$clog2(ISSUE_QUEUE_FP_LATENCY):0] canBeFlushedRegCountFP;    //FlushedOpが存在している可能性があるFPパイプラインレジスタの段数
+    
+    // SMT: Flush counters per thread
+    logic [$clog2(ISSUE_QUEUE_FP_LATENCY):0] canBeFlushedRegCountFP[NUM_THREADS];
     logic flushFP[ FP_ISSUE_WIDTH ];
     IssueQueueIndexPath fpSelectedPtr[ FP_ISSUE_WIDTH ];
 `endif
 
     // Flushed Op detection
-    logic [$clog2(ISSUE_QUEUE_INT_LATENCY):0] canBeFlushedRegCountInt;    //FlushedOpが存在している可能性があるIntパイプラインレジスタの段数
-    logic [$clog2(ISSUE_QUEUE_MEM_LATENCY):0] canBeFlushedRegCountMem;    //FlushedOpが存在している可能性があるMemパイプラインレジスタの段数
-    ActiveListIndexPath flushRangeHeadPtr;  //フラッシュされた命令の範囲のhead
-    ActiveListIndexPath flushRangeTailPtr;  //フラッシュされた命令の範囲のtail
-    logic flushAllInsns;
+    // SMT: Flush counters per thread
+    logic [$clog2(ISSUE_QUEUE_INT_LATENCY):0] canBeFlushedRegCountInt[NUM_THREADS];
+    logic [$clog2(ISSUE_QUEUE_MEM_LATENCY):0] canBeFlushedRegCountMem[NUM_THREADS];
+    
+    // Flush range snapshot (Per Thread)
+    ActiveListIndexPath flushRangeHeadPtr[NUM_THREADS];
+    ActiveListIndexPath flushRangeTailPtr[NUM_THREADS];
+    logic flushAllInsns[NUM_THREADS];
+    
     logic flushInt[ INT_ISSUE_WIDTH ];
     logic flushMem[ LOAD_ISSUE_WIDTH ];
     IssueQueueIndexPath intSelectedPtr[ INT_ISSUE_WIDTH ];
@@ -81,6 +90,7 @@ module WakeupPipelineRegister(
                 intPipeReg[i][j].ptr <= '1;
                 intPipeReg[i][j].depVector <= '1;
                 intPipeReg[i][j].activeListPtr <= '1;
+                intPipeReg[i][j].tid <= '0;
             end
         end
 
@@ -90,6 +100,7 @@ module WakeupPipelineRegister(
                 complexPipeReg[i][j].ptr <= '1;
                 complexPipeReg[i][j].depVector <= '1;
                 complexPipeReg[i][j].activeListPtr <= '1;
+                complexPipeReg[i][j].tid <= '0;
             end
         end
 `endif
@@ -99,6 +110,7 @@ module WakeupPipelineRegister(
                 memPipeReg[i][j].ptr <= '1;
                 memPipeReg[i][j].depVector <= '1;
                 memPipeReg[i][j].activeListPtr <= '1;
+                memPipeReg[i][j].tid <= '0;
             end
         end
 
@@ -108,16 +120,29 @@ module WakeupPipelineRegister(
                 fpPipeReg[i][j].ptr <= '1;
                 fpPipeReg[i][j].depVector <= '1;
                 fpPipeReg[i][j].activeListPtr <= '1;
+                fpPipeReg[i][j].tid <= '0;
             end
         end
 `endif
     end
 `endif
 
+    // Helper to derive TID from ActiveListPtr
+    function automatic ThreadID GetTidFromALPtr(ActiveListIndexPath ptr);
+        // Simple static partitioning check
+        // T0: 0 to N/2 - 1
+        // T1: N/2 to N - 1
+        if (ptr >= (ACTIVE_LIST_ENTRY_NUM / NUM_THREADS)) 
+            return 1;
+        else 
+            return 0;
+    endfunction
+
     always_ff @( posedge port.clk ) begin
-        if( port.rst ||(recovery.toRecoveryPhase && !recovery.recoveryFromRwStage) ) begin
-            // Upon reset or recovery from the commit stage, initialize the wakeup pipeline register.
-            // Set the valid flag to FALSE and the depVector to '0 to prevent incorrect wakeups of unrelated registers/instructions.
+        if( port.rst ||(recovery.toRecoveryPhase[0] && !recovery.recoveryFromRwStage[0]) || (recovery.toRecoveryPhase[1] && !recovery.recoveryFromRwStage[1])) begin
+            // SMT Note: If ANY thread triggers a global-style reset (commit phase recovery), 
+            // we clear the wakeup pipeline. This is conservative but safe.
+            
             for( int i = 0; i < INT_ISSUE_WIDTH; i++ ) begin
                 for( int j = 0; j < ISSUE_QUEUE_INT_LATENCY; j++ ) begin
                     intPipeReg[i][j].valid <= FALSE;
@@ -151,7 +176,7 @@ module WakeupPipelineRegister(
 `endif
         end
         else if ( !port.stall ) begin
-            // 通常動作
+            // Normal operation
             for( int i = 0; i < INT_ISSUE_WIDTH; i++ ) begin
                 for( int j = 1; j < ISSUE_QUEUE_INT_LATENCY; j++ ) begin
                     intPipeReg[i][j-1] <= intPipeReg[i][j];
@@ -185,11 +210,7 @@ module WakeupPipelineRegister(
 `endif
         end
         else begin
-            // When the scheduler is stalled, only the 1st stage ([LATENCY-1]) of PipeReg needs to
-            // be stalled so that the select result of that cycle is not reflected.
-            // The 2nd and subsequent stages continue to flow regardless of stall.
-            // Therefore the 2nd stage ([LATENCY-2]) must be filled with bubbles when the 1st stage is stalled.
-            // IntPipe has only one stage by default, so such bubbles are unnecessary for IntPipe.
+            // Stall Logic
 `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
             for( int i = 0; i < COMPLEX_ISSUE_WIDTH; i++ ) begin
                 for( int j = 1; j < ISSUE_QUEUE_COMPLEX_LATENCY-1; j++ ) begin
@@ -222,18 +243,19 @@ module WakeupPipelineRegister(
 
     always_comb begin
         // A bit vector indicating whether each IQ entry is flushed.
-        // This is used to deassert the wakeup signal of instructions that are selected but flushed at the same time.
         flushIQ_Entry = recovery.flushIQ_Entry;
+        
         //
         // Register selected ops.
         //
         for (int i = 0; i < INT_ISSUE_WIDTH; i++ ) begin
-            // Input of PipeReg (Selected Data)
             intSelectedPtr[i] = port.selectedPtr[i];
             nextIntPipeReg[i].valid = port.selected[i] && !flushIQ_Entry[intSelectedPtr[i]];
             nextIntPipeReg[i].ptr = port.selectedPtr[i];
             nextIntPipeReg[i].depVector = port.selectedVector[i] & ~flushIQ_Entry;
             nextIntPipeReg[i].activeListPtr = recovery.selectedActiveListPtr[i];
+            // SMT: Derive TID
+            nextIntPipeReg[i].tid = GetTidFromALPtr(recovery.selectedActiveListPtr[i]);
         end
 
 `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
@@ -243,6 +265,8 @@ module WakeupPipelineRegister(
             nextComplexPipeReg[i].ptr = port.selectedPtr[(i+INT_ISSUE_WIDTH)];
             nextComplexPipeReg[i].depVector = port.selectedVector[(i+INT_ISSUE_WIDTH)] & ~flushIQ_Entry;
             nextComplexPipeReg[i].activeListPtr = recovery.selectedActiveListPtr[(i+INT_ISSUE_WIDTH)];
+            // SMT: Derive TID
+            nextComplexPipeReg[i].tid = GetTidFromALPtr(recovery.selectedActiveListPtr[(i+INT_ISSUE_WIDTH)]);
         end
 `endif
 
@@ -252,6 +276,8 @@ module WakeupPipelineRegister(
             nextMemPipeReg[i].ptr = port.selectedPtr[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH)];
             nextMemPipeReg[i].depVector = port.selectedVector[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH)] & ~flushIQ_Entry;
             nextMemPipeReg[i].activeListPtr = recovery.selectedActiveListPtr[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH)];
+            // SMT: Derive TID
+            nextMemPipeReg[i].tid = GetTidFromALPtr(recovery.selectedActiveListPtr[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH)]);
         end
 
 `ifdef RSD_MARCH_FP_PIPE
@@ -261,6 +287,8 @@ module WakeupPipelineRegister(
             nextFPPipeReg[i].ptr = port.selectedPtr[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH+MEM_ISSUE_WIDTH)];
             nextFPPipeReg[i].depVector = port.selectedVector[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH+MEM_ISSUE_WIDTH)] & ~flushIQ_Entry;
             nextFPPipeReg[i].activeListPtr = recovery.selectedActiveListPtr[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH+MEM_ISSUE_WIDTH)];
+            // SMT: Derive TID
+            nextFPPipeReg[i].tid = GetTidFromALPtr(recovery.selectedActiveListPtr[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH+MEM_ISSUE_WIDTH)]);
         end
 `endif
 
@@ -268,13 +296,14 @@ module WakeupPipelineRegister(
         // Exit from the pipeline registers and now wakeup consumers.
         //
         for (int i = 0; i < INT_ISSUE_WIDTH; i++ ) begin
-            // Output of PipeReg (Wakeup Data)
-            // Now, WAKEUP_WIDTH == ISSUE_WIDTH
+            // SMT: Use the stored TID to check the correct recovery array index
+            ThreadID t = intPipeReg[i][0].tid;
+            
             flushInt[i] = SelectiveFlushDetector(
-                            canBeFlushedRegCountInt != 0,
-                            flushRangeHeadPtr,
-                            flushRangeTailPtr,
-                            flushAllInsns,
+                            canBeFlushedRegCountInt[t] != 0,
+                            flushRangeHeadPtr[t],
+                            flushRangeTailPtr[t],
+                            flushAllInsns[t],
                             intPipeReg[i][0].activeListPtr
                             );
             port.wakeup[i] = intPipeReg[i][0].valid && !flushInt[i] && !port.stall;
@@ -284,11 +313,12 @@ module WakeupPipelineRegister(
 
 `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
         for (int i = 0; i < COMPLEX_ISSUE_WIDTH; i++) begin
+            ThreadID t = complexPipeReg[i][0].tid;
             flushComplex[i] = SelectiveFlushDetector(
-                            canBeFlushedRegCountComplex != 0,
-                            flushRangeHeadPtr,
-                            flushRangeTailPtr,
-                            flushAllInsns,
+                            canBeFlushedRegCountComplex[t] != 0,
+                            flushRangeHeadPtr[t],
+                            flushRangeTailPtr[t],
+                            flushAllInsns[t],
                             complexPipeReg[i][0].activeListPtr
                             );
             port.wakeup[(i+INT_ISSUE_WIDTH)] = complexPipeReg[i][0].valid && !flushComplex[i];
@@ -300,11 +330,12 @@ module WakeupPipelineRegister(
 `ifdef RSD_MARCH_UNIFIED_LDST_MEM_PIPE
         // Store ports do not wake up consumers, thus LOAD_ISSUE_WIDTH is used.
         for (int i = 0; i < MEM_ISSUE_WIDTH; i++) begin
+            ThreadID t = memPipeReg[i][0].tid;
             flushMem[i] = SelectiveFlushDetector(
-                            canBeFlushedRegCountMem != 0,
-                            flushRangeHeadPtr,
-                            flushRangeTailPtr,
-                            flushAllInsns,
+                            canBeFlushedRegCountMem[t] != 0,
+                            flushRangeHeadPtr[t],
+                            flushRangeTailPtr[t],
+                            flushAllInsns[t],
                             memPipeReg[i][0].activeListPtr
                           );
             port.wakeup[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH)] = memPipeReg[i][0].valid && !flushMem[i];
@@ -314,27 +345,24 @@ module WakeupPipelineRegister(
 
         // Wake up an instruction that depends on the store
         for (int i = 0; i < STORE_ISSUE_WIDTH; i++) begin
-            // Not need to assert flushMem because store dependent is not related on register
             port.wakeupPtr[i+WAKEUP_WIDTH] = memPipeReg[i][0].ptr;
             port.wakeupVector[i+WAKEUP_WIDTH] = memPipeReg[i][0].depVector;
         end
 `else
-        // Store ports do not wake up consumers, thus LOAD_ISSUE_WIDTH is used.
         for (int i = 0; i < LOAD_ISSUE_WIDTH; i++) begin
+            ThreadID t = memPipeReg[i][0].tid;
             flushMem[i] = SelectiveFlushDetector(
-                            canBeFlushedRegCountMem != 0,
-                            flushRangeHeadPtr,
-                            flushRangeTailPtr,
-                            flushAllInsns,
+                            canBeFlushedRegCountMem[t] != 0,
+                            flushRangeHeadPtr[t],
+                            flushRangeTailPtr[t],
+                            flushAllInsns[t],
                             memPipeReg[i][0].activeListPtr
                             );
             port.wakeup[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH)] = memPipeReg[i][0].valid && !flushMem[i];
             port.wakeupPtr[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH)] = memPipeReg[i][0].ptr;
             port.wakeupVector[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH)] = memPipeReg[i][0].depVector;
         end
-        // Wake up an instruction that depends on the store
         for (int i = 0; i < MEM_ISSUE_WIDTH - LOAD_ISSUE_WIDTH; i++) begin
-            // Not need to assert flushMem because store dependent is not related on register
             port.wakeupPtr[i+WAKEUP_WIDTH] = memPipeReg[i+LOAD_ISSUE_WIDTH][0].ptr;
             port.wakeupVector[i+WAKEUP_WIDTH] = memPipeReg[i+LOAD_ISSUE_WIDTH][0].depVector;
         end
@@ -342,11 +370,12 @@ module WakeupPipelineRegister(
 
 `ifdef RSD_MARCH_FP_PIPE
         for (int i = 0; i < FP_ISSUE_WIDTH; i++) begin
+            ThreadID t = fpPipeReg[i][0].tid;
             flushFP[i] = SelectiveFlushDetector(
-                            canBeFlushedRegCountFP != 0,
-                            flushRangeHeadPtr,
-                            flushRangeTailPtr,
-                            flushAllInsns,
+                            canBeFlushedRegCountFP[t] != 0,
+                            flushRangeHeadPtr[t],
+                            flushRangeTailPtr[t],
+                            flushAllInsns[t],
                             fpPipeReg[i][0].activeListPtr
                             );
             port.wakeup[(i+INT_ISSUE_WIDTH+COMPLEX_ISSUE_WIDTH+LOAD_ISSUE_WIDTH)] = fpPipeReg[i][0].valid && !flushFP[i];
@@ -358,12 +387,7 @@ module WakeupPipelineRegister(
     end
 
     // To an issue queue.
-    // Flushed op is detected here.
     always_comb begin
-        //
-        // Release issue queue entries.
-        // Entries can be released after they wake up consumers.
-        //
         for (int i = 0; i < INT_ISSUE_WIDTH; i++) begin
             port.releaseEntry[i] = intPipeReg[i][0].valid && !port.stall;
             port.releasePtr[i] = intPipeReg[i][0].ptr;
@@ -386,86 +410,78 @@ module WakeupPipelineRegister(
 `endif
     end
 
+    // Flush Counter Logic (SMT Updated)
     always_ff @( posedge port.clk ) begin
         if(port.rst) begin
-            canBeFlushedRegCountInt <= 0;
+            for(int t=0; t<NUM_THREADS; t++) begin
+                canBeFlushedRegCountInt[t] <= 0;
+                canBeFlushedRegCountMem[t] <= 0;
+                flushRangeHeadPtr[t] <= 0;
+                flushRangeTailPtr[t] <= 0;
+                flushAllInsns[t] <= FALSE;
 `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
-            canBeFlushedRegCountComplex <= 0;
+                canBeFlushedRegCountComplex[t] <= 0;
 `endif
-            canBeFlushedRegCountMem <= 0;
 `ifdef RSD_MARCH_FP_PIPE
-            canBeFlushedRegCountFP <= 0;
+                canBeFlushedRegCountFP[t] <= 0;
 `endif
-            flushRangeHeadPtr <= 0;
-            flushRangeTailPtr <= 0;
-            flushAllInsns <= FALSE;
-        end
-        else if(recovery.toRecoveryPhase && recovery.recoveryFromRwStage) begin
-            canBeFlushedRegCountInt <= ISSUE_QUEUE_INT_LATENCY;
-`ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
-            canBeFlushedRegCountComplex <= ISSUE_QUEUE_COMPLEX_LATENCY;
-`endif
-            canBeFlushedRegCountMem <= ISSUE_QUEUE_MEM_LATENCY;
-`ifdef RSD_MARCH_FP_PIPE
-            canBeFlushedRegCountFP <= ISSUE_QUEUE_FP_LATENCY;
-`endif
-            flushRangeHeadPtr <= recovery.flushRangeHeadPtr;
-            flushRangeTailPtr <= recovery.flushRangeTailPtr;
-            flushAllInsns <= recovery.flushAllInsns;
+            end
         end
         else begin
-            if(canBeFlushedRegCountInt == ISSUE_QUEUE_INT_LATENCY) begin
-                if(!port.stall) begin
-                    canBeFlushedRegCountInt <= canBeFlushedRegCountInt-1;
-                end
-            end
-            else if (canBeFlushedRegCountInt > 0) begin
-                canBeFlushedRegCountInt <= canBeFlushedRegCountInt-1;
-            end
+            for(int t=0; t<NUM_THREADS; t++) begin
+                // Check if THIS thread is recovering from RW stage
+                if(recovery.toRecoveryPhase[t] && recovery.recoveryFromRwStage[t]) begin
+                    canBeFlushedRegCountInt[t] <= ISSUE_QUEUE_INT_LATENCY;
 `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
-            if(canBeFlushedRegCountComplex == ISSUE_QUEUE_COMPLEX_LATENCY) begin
-                if(!port.stall) begin
-                    canBeFlushedRegCountComplex <= canBeFlushedRegCountComplex-1;
-                end
-            end
-            else if (canBeFlushedRegCountComplex > 0) begin
-                canBeFlushedRegCountComplex <= canBeFlushedRegCountComplex-1;
-            end
+                    canBeFlushedRegCountComplex[t] <= ISSUE_QUEUE_COMPLEX_LATENCY;
 `endif
-            if(canBeFlushedRegCountMem == ISSUE_QUEUE_MEM_LATENCY) begin
-                if(!port.stall) begin
-                    canBeFlushedRegCountMem <= canBeFlushedRegCountMem-1;
-                end
-            end
-            else if (canBeFlushedRegCountMem > 0) begin
-                canBeFlushedRegCountMem <= canBeFlushedRegCountMem-1;
-            end
+                    canBeFlushedRegCountMem[t] <= ISSUE_QUEUE_MEM_LATENCY;
 `ifdef RSD_MARCH_FP_PIPE
-            if(canBeFlushedRegCountFP == ISSUE_QUEUE_FP_LATENCY) begin
-                if(!port.stall) begin
-                    canBeFlushedRegCountFP <= canBeFlushedRegCountFP-1;
+                    canBeFlushedRegCountFP[t] <= ISSUE_QUEUE_FP_LATENCY;
+`endif
+                    flushRangeHeadPtr[t] <= recovery.flushRangeHeadPtr[t];
+                    flushRangeTailPtr[t] <= recovery.flushRangeTailPtr[t];
+                    flushAllInsns[t] <= recovery.flushAllInsns[t];
+                end
+                else begin
+                    // Decrement counters normally
+                    if (canBeFlushedRegCountInt[t] > 0 && !port.stall) 
+                        canBeFlushedRegCountInt[t] <= canBeFlushedRegCountInt[t]-1;
+                        
+                    if (canBeFlushedRegCountMem[t] > 0 && !port.stall)
+                        canBeFlushedRegCountMem[t] <= canBeFlushedRegCountMem[t]-1;
+
+`ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
+                    if (canBeFlushedRegCountComplex[t] > 0 && !port.stall)
+                        canBeFlushedRegCountComplex[t] <= canBeFlushedRegCountComplex[t]-1;
+`endif
+`ifdef RSD_MARCH_FP_PIPE
+                    if (canBeFlushedRegCountFP[t] > 0 && !port.stall)
+                        canBeFlushedRegCountFP[t] <= canBeFlushedRegCountFP[t]-1;
+`endif
                 end
             end
-            else if (canBeFlushedRegCountFP > 0) begin
-                canBeFlushedRegCountFP <= canBeFlushedRegCountFP-1;
-            end
-`endif
         end
     end
 
+    // Output to Recovery Manager
+    // Aggregate: If ANY thread has ops to flush, signal TRUE. 
+    // This is conservative and safe.
     always_comb begin
-        recovery.wakeupPipelineRegFlushedOpExist = 
-            (canBeFlushedRegCountInt != 0) || 
+        recovery.wakeupPipelineRegFlushedOpExist = FALSE;
+        for(int t=0; t<NUM_THREADS; t++) begin
+            if (canBeFlushedRegCountInt[t] != 0 || 
+                canBeFlushedRegCountMem[t] != 0 
 `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
-            (canBeFlushedRegCountComplex != 0) || 
+                || canBeFlushedRegCountComplex[t] != 0 
 `endif
 `ifdef RSD_MARCH_FP_PIPE
-            (canBeFlushedRegCountFP != 0) || 
+                || canBeFlushedRegCountFP[t] != 0 
 `endif
-            (canBeFlushedRegCountMem != 0);
+               ) begin
+               recovery.wakeupPipelineRegFlushedOpExist = TRUE;
+            end
+        end
     end
 
 endmodule : WakeupPipelineRegister
-
-
-

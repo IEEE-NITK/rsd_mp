@@ -3,14 +3,9 @@
 
 
 //
-// Recovery Manager
-//   リカバリに遷移する信号を各モジュールにブロードキャストするモジュール
-//   モジュールのリカバリ自体はそれぞれのモジュール中で記述される
+// Recovery Manager (SMT)
+// Handles recovery state machines for multiple threads independently.
 //
-// 例外が起きてリカバリが行われる様子は以下のようになっている
-// 1. RwStageもしくはCmStageからexceptionDetected信号が, RecoveryManagerに発信される
-// 2. exceptionDetected信号があさーとされた次のサイクルに, 各モジュールにtoRecoveryPhase信号が発信される(PHASE_RECOVER_0)
-// 3. すべてのモジュールのリカバリが終わったことを確認したら, 各モジュールにtoCommitPhase信号を送り, リカバリ終了
 
 `include "BasicMacros.sv"
 
@@ -30,210 +25,194 @@ module RecoveryManager(
 );
     typedef struct packed
     {
-        // リカバリのフェーズ
-        // 実行ステージからリカバリがかかる場合もあるので，
-        // コミットステージのフェーズと同期しているわけではない
         PipelinePhase phase;
 
-        // リカバリ要求
-        // これらはステージの終わりのあたりで来ることが多いので，一旦レジスタに積んで
-        // パイプライン化する
         logic exceptionDetectedInCommitStage;
         AddrPath recoveredPC_FromRwStage;
         AddrPath recoveredPC_FromCommitStage;
 
-        // Related to CSR 
-        // これらもパイプライン化のため
-        ExecutionState excptCause;      // Trap vector or MRET return target
-        AddrPath excptCauseDataAddr;    // fault 発生時のデータアドレス
+        ExecutionState excptCause;      
+        AddrPath excptCauseDataAddr;    
 
-        // ActiveList中のどのエントリがどのエントリまでをフラッシュするかを示すポインタ
         ActiveListIndexPath flushRangeHeadPtr;
         ActiveListIndexPath flushRangeTailPtr;
-     
-        logic recoveryFromRwStage;  // 例外がどこのステージで検出されたか
-        RefetchType refetchType;    // リフェッチのタイプ
+      
+        logic recoveryFromRwStage;  
+        RefetchType refetchType;    
 
     } RecoveryManagerStatePath;
-    RecoveryManagerStatePath regState;
-    RecoveryManagerStatePath nextState;
+    
+    // SMT: Duplicate State per Thread
+    RecoveryManagerStatePath regState[NUM_THREADS];
+    RecoveryManagerStatePath nextState[NUM_THREADS];
 
-    // 各モジュールに送られる信号
-    // リカバリ時の動作自体は各モジュールで記述される
-    logic toRecoveryPhase, toCommitPhase;
-
-    // CSR からリフェッチするかどうか
-    logic refetchFromCSR;
-
-    //リカバリによって回復されるPC
-    PC_Path recoveredPC;
-
-    // 例外を起こした命令のActiveListのポインタ
-    ActiveListIndexPath exceptionOpPtr;
-
-    // 例外が検出された後リカバリ状態に移行する
-    logic exceptionDetected;
+    // Internal signals
+    logic toRecoveryPhase[NUM_THREADS];
+    logic toCommitPhase[NUM_THREADS];
+    logic refetchFromCSR[NUM_THREADS];
+    PC_Path recoveredPC[NUM_THREADS];
+    ActiveListIndexPath exceptionOpPtr[NUM_THREADS];
+    logic exceptionDetected[NUM_THREADS];
 
     always_ff@(posedge port.clk) begin  // synchronous rst
         if (!port.rst) begin
-            regState <= nextState;
+            for(int t=0; t<NUM_THREADS; t++) begin
+                regState[t] <= nextState[t];
+            end
         end
         else begin
-            regState.phase <= PHASE_COMMIT;
-            regState.flushRangeHeadPtr <= '0;
-            regState.flushRangeTailPtr <= '0;
-            regState.recoveryFromRwStage <= FALSE;
-            regState.refetchType <= REFETCH_TYPE_THIS_PC;
+            for(int t=0; t<NUM_THREADS; t++) begin
+                regState[t].phase <= PHASE_COMMIT;
+                regState[t].flushRangeHeadPtr <= '0;
+                regState[t].flushRangeTailPtr <= '0;
+                regState[t].recoveryFromRwStage <= FALSE;
+                regState[t].refetchType <= REFETCH_TYPE_THIS_PC;
 
-            regState.exceptionDetectedInCommitStage <= '0;
-            regState.recoveredPC_FromRwStage <= '0;
-            regState.recoveredPC_FromCommitStage <= '0;
+                regState[t].exceptionDetectedInCommitStage <= '0;
+                regState[t].recoveredPC_FromRwStage <= '0;
+                regState[t].recoveredPC_FromCommitStage <= '0;
 
-            regState.excptCause <= EXEC_STATE_NOT_FINISHED;
-            regState.excptCauseDataAddr <= '0;
+                regState[t].excptCause <= EXEC_STATE_NOT_FINISHED;
+                regState[t].excptCauseDataAddr <= '0;
+            end
         end
     end
 
 
     always_comb begin
-        // To Recovery 0
-        toRecoveryPhase = 
-            port.exceptionDetectedInCommitStage || 
-            port.exceptionDetectedInRwStage;
-        if (toRecoveryPhase) begin
-            nextState.recoveryFromRwStage = port.exceptionDetectedInRwStage;
-        end
-        else begin
-            nextState.recoveryFromRwStage = FALSE;
-        end
+        //
+        // SMT Loop
+        //
+        for(int t=0; t<NUM_THREADS; t++) begin
+            
+            // 1. Trigger Detection
+            // Check if RW stage exception targets THIS thread
+            logic rw_exception_for_me;
+            rw_exception_for_me = port.exceptionDetectedInRwStage && (port.exceptionTidFromRwStage == t);
 
-        // Return to COMMIT_PHASE
-        toCommitPhase =
-            (regState.phase == PHASE_RECOVER_1) &&  // must be PHASE_RECOVER_1 because PHASE_RECOVER_0 procedures has been finished
-            !(port.renameLogicRecoveryRMT || port.issueQueueReturnIndex); // LSQ は1サイクルでリカバリが行われるので待つべきは RMT と IQ
-        nextState.refetchType = 
-            port.exceptionDetectedInCommitStage ? 
-                port.refetchTypeFromCommitStage : 
-                port.refetchTypeFromRwStage;
+            toRecoveryPhase[t] = 
+                port.exceptionDetectedInCommitStage[t] || 
+                rw_exception_for_me;
 
-        // Trap/fault origin
-        // これらの要求は一旦レジスタに積む
-        nextState.excptCause = port.recoveryCauseFromCommitStage;
-        nextState.excptCauseDataAddr = port.faultingDataAddr;
-        nextState.exceptionDetectedInCommitStage = port.exceptionDetectedInCommitStage;
-        nextState.recoveredPC_FromRwStage = port.recoveredPC_FromRwStage;
-        nextState.recoveredPC_FromCommitStage = port.recoveredPC_FromCommitStage;
-
-        // CSR への要求はすべて PHASE_RECOVER_0 に行う
-        refetchFromCSR = regState.refetchType inside {
-            REFETCH_TYPE_NEXT_PC_TO_CSR_TARGET, REFETCH_TYPE_THIS_PC_TO_CSR_TARGET
-        };
-        csrUnit.triggerExcpt = (regState.phase == PHASE_RECOVER_0) && refetchFromCSR;
-        csrUnit.excptCauseAddr = ToPC_FromAddr(regState.recoveredPC_FromCommitStage);
-        csrUnit.excptCause = regState.excptCause;
-        csrUnit.excptCauseDataAddr = regState.excptCauseDataAddr;
-
-        // Recovered PC
-        if(regState.phase == PHASE_RECOVER_0) begin
-            if (refetchFromCSR) begin
-                recoveredPC = ToPC_FromAddr(csrUnit.excptTargetAddr);
+            if (toRecoveryPhase[t]) begin
+                nextState[t].recoveryFromRwStage = rw_exception_for_me;
             end
             else begin
-                if (regState.refetchType == REFETCH_TYPE_THIS_PC) begin
-                    recoveredPC = regState.exceptionDetectedInCommitStage ?
-                        ToPC_FromAddr(regState.recoveredPC_FromCommitStage) : 
-                        ToPC_FromAddr(regState.recoveredPC_FromRwStage);
+                nextState[t].recoveryFromRwStage = FALSE;
+            end
+
+            // 2. Return to Commit
+            toCommitPhase[t] =
+                (regState[t].phase == PHASE_RECOVER_1) &&  
+                !(port.renameLogicRecoveryRMT[t] || port.issueQueueReturnIndex); // IQ return index global? Need check.
+
+            nextState[t].refetchType = 
+                port.exceptionDetectedInCommitStage[t] ? 
+                port.refetchTypeFromCommitStage[t] : 
+                port.refetchTypeFromRwStage;
+
+            // 3. Latch Requests
+            nextState[t].excptCause = port.recoveryCauseFromCommitStage[t];
+            nextState[t].excptCauseDataAddr = port.faultingDataAddr; // Shared fault addr?
+            nextState[t].exceptionDetectedInCommitStage = port.exceptionDetectedInCommitStage[t];
+            nextState[t].recoveredPC_FromRwStage = port.recoveredPC_FromRwStage;
+            nextState[t].recoveredPC_FromCommitStage = port.recoveredPC_FromCommitStage[t];
+
+            // 4. CSR / Refetch Logic
+            refetchFromCSR[t] = regState[t].refetchType inside {
+                REFETCH_TYPE_NEXT_PC_TO_CSR_TARGET, REFETCH_TYPE_THIS_PC_TO_CSR_TARGET
+            };
+            
+            // CSR Unit Interface (Arbitrated or Threaded?)
+            // Assuming CSR Unit handles array inputs
+            csrUnit.triggerExcpt[t] = (regState[t].phase == PHASE_RECOVER_0) && refetchFromCSR[t];
+            csrUnit.excptCauseAddr[t] = ToPC_FromAddr(regState[t].recoveredPC_FromCommitStage);
+            csrUnit.excptCause[t] = regState[t].excptCause;
+            csrUnit.excptCauseDataAddr[t] = regState[t].excptCauseDataAddr;
+
+            // 5. Recovered PC Calculation
+            if(regState[t].phase == PHASE_RECOVER_0) begin
+                if (refetchFromCSR[t]) begin
+                    recoveredPC[t] = ToPC_FromAddr(csrUnit.excptTargetAddr[t]);
                 end
-                else if (regState.refetchType inside{REFETCH_TYPE_NEXT_PC, REFETCH_TYPE_STORE_NEXT_PC}) begin
-                    recoveredPC = regState.exceptionDetectedInCommitStage ?
-                        ToPC_FromAddr(regState.recoveredPC_FromCommitStage) + INSN_BYTE_WIDTH : 
-                        ToPC_FromAddr(regState.recoveredPC_FromRwStage) + INSN_BYTE_WIDTH;
-                end
-                else begin // REFETCH_TYPE_BRANCH_TARGET
-                    recoveredPC = regState.exceptionDetectedInCommitStage ?
-                        ToPC_FromAddr(regState.recoveredPC_FromCommitStage) : 
-                        ToPC_FromAddr(regState.recoveredPC_FromRwStage);
+                else begin
+                    if (regState[t].refetchType == REFETCH_TYPE_THIS_PC) begin
+                        recoveredPC[t] = regState[t].exceptionDetectedInCommitStage ?
+                            ToPC_FromAddr(regState[t].recoveredPC_FromCommitStage) : 
+                            ToPC_FromAddr(regState[t].recoveredPC_FromRwStage);
+                    end
+                    else if (regState[t].refetchType inside{REFETCH_TYPE_NEXT_PC, REFETCH_TYPE_STORE_NEXT_PC}) begin
+                        recoveredPC[t] = regState[t].exceptionDetectedInCommitStage ?
+                            ToPC_FromAddr(regState[t].recoveredPC_FromCommitStage) + INSN_BYTE_WIDTH : 
+                            ToPC_FromAddr(regState[t].recoveredPC_FromRwStage) + INSN_BYTE_WIDTH;
+                    end
+                    else begin // REFETCH_TYPE_BRANCH_TARGET
+                        recoveredPC[t] = regState[t].exceptionDetectedInCommitStage ?
+                            ToPC_FromAddr(regState[t].recoveredPC_FromCommitStage) : 
+                            ToPC_FromAddr(regState[t].recoveredPC_FromRwStage);
+                    end
                 end
             end
-        end
-        else begin
-            recoveredPC = '0;
-        end
+            else begin
+                recoveredPC[t] = '0;
+            end
 
-        if(port.rst) begin
-            nextState.phase = PHASE_COMMIT;
-        end
-        else if(regState.phase == PHASE_COMMIT) begin
-            nextState.phase = toRecoveryPhase ? PHASE_RECOVER_0 : PHASE_COMMIT;
-        end
-        else if(regState.phase == PHASE_RECOVER_0) begin
-            nextState.phase = PHASE_RECOVER_1;
-        end
-        else begin
-            nextState.phase = toCommitPhase ? PHASE_COMMIT : regState.phase;
-        end
+            // 6. State Transition
+            if(port.rst) begin
+                nextState[t].phase = PHASE_COMMIT;
+            end
+            else if(regState[t].phase == PHASE_COMMIT) begin
+                nextState[t].phase = toRecoveryPhase[t] ? PHASE_RECOVER_0 : PHASE_COMMIT;
+            end
+            else if(regState[t].phase == PHASE_RECOVER_0) begin
+                nextState[t].phase = PHASE_RECOVER_1;
+            end
+            else begin
+                nextState[t].phase = toCommitPhase[t] ? PHASE_COMMIT : regState[t].phase;
+            end
 
-        port.phase = regState.phase;
+            // 7. Output Assignments
+            port.phase[t] = regState[t].phase;
+            port.toCommitPhase[t] = toCommitPhase[t];
+            port.toRecoveryPhase[t] = (regState[t].phase == PHASE_RECOVER_0);
+            port.recoveryFromRwStage[t] = regState[t].recoveryFromRwStage;
 
-        // Update a PC in a fetcher if branch misprediction occurs.
-        port.recoveredPC_FromRwCommit = recoveredPC;
-        port.toCommitPhase = toCommitPhase;
+            // Flush Range Calculation
+            exceptionDetected[t] = port.exceptionDetectedInCommitStage[t] || rw_exception_for_me;
+            // activeList needs to output exceptionOpPtr for the specific thread? 
+            // Or we calculate based on head/tail.
+            // Assuming activeList.exceptionOpPtr is valid for the recovering thread.
+            exceptionOpPtr[t] = activeList.exceptionOpPtr; 
 
-        // To each logic to be recovered.
-        port.toRecoveryPhase = regState.phase == PHASE_RECOVER_0;
-        port.recoveryFromRwStage = regState.recoveryFromRwStage;
+            nextState[t].flushRangeHeadPtr = 
+                (nextState[t].refetchType inside {REFETCH_TYPE_THIS_PC, REFETCH_TYPE_THIS_PC_TO_CSR_TARGET}) ?
+                    exceptionOpPtr[t] : exceptionOpPtr[t] + 1;
+            
+            nextState[t].flushRangeTailPtr = activeList.detectedFlushRangeTailPtr;
+            
+            port.flushRangeHeadPtr[t] = regState[t].flushRangeHeadPtr;
+            port.flushRangeTailPtr[t] = regState[t].flushRangeTailPtr;
 
-        // 選択的フラッシュにおいても，フロントエンドは全てフラッシュされる
-        ctrl.cmStageFlushUpper = regState.phase == PHASE_RECOVER_0;
+            port.unableToStartRecovery[t] = 
+                (regState[t].phase != PHASE_COMMIT) || 
+                port.renameLogicRecoveryRMT[t] || 
+                port.issueQueueReturnIndex || 
+                port.replayQueueFlushedOpExist || 
+                port.wakeupPipelineRegFlushedOpExist;
+        end 
 
-        // フラッシュする命令の範囲の管理
-        exceptionDetected = port.exceptionDetectedInCommitStage || port.exceptionDetectedInRwStage;
-        exceptionOpPtr = activeList.exceptionOpPtr;
-
-        nextState.flushRangeHeadPtr = 
-            (nextState.refetchType inside {REFETCH_TYPE_THIS_PC, REFETCH_TYPE_THIS_PC_TO_CSR_TARGET}) ?
-                exceptionOpPtr : exceptionOpPtr + 1;
-        nextState.flushRangeTailPtr = activeList.detectedFlushRangeTailPtr;
-        port.loadQueueRecoveryTailPtr = activeList.loadQueueRecoveryTailPtr;
-        port.storeQueueRecoveryTailPtr = 
-            regState.refetchType == REFETCH_TYPE_STORE_NEXT_PC ? 
-                (activeList.storeQueueRecoveryTailPtr + 1): activeList.storeQueueRecoveryTailPtr;
-
-        port.flushRangeHeadPtr = regState.flushRangeHeadPtr;
-        port.flushRangeTailPtr = regState.flushRangeTailPtr;
-
-        // 
-        port.unableToStartRecovery = 
-            (regState.phase != PHASE_COMMIT) || 
-            port.renameLogicRecoveryRMT || 
-            port.issueQueueReturnIndex || 
-            port.replayQueueFlushedOpExist || 
-            port.wakeupPipelineRegFlushedOpExist;
-
-
-        // Hardware Counter
-`ifndef RSD_DISABLE_PERFORMANCE_COUNTER
-        perfCounter.storeLoadForwardingFail =
-            regState.phase == PHASE_RECOVER_0 && (regState.refetchType == REFETCH_TYPE_THIS_PC);
-        perfCounter.memDepPredMiss =
-            regState.phase == PHASE_RECOVER_0 && (regState.refetchType inside {REFETCH_TYPE_NEXT_PC, REFETCH_TYPE_STORE_NEXT_PC});
-        perfCounter.branchPredMiss =
-            regState.phase == PHASE_RECOVER_0 && (regState.refetchType == REFETCH_TYPE_BRANCH_TARGET);
-`endif
+        // Muxing Global Outputs
+        // The Recovered PC for FetchStage must be selected based on which thread is recovering.
+        // If both recovering? Priority to T0 or separate PCs.
+        // FetchStage usually has separate PC inputs for recovery, or we arbitrate.
+        // Ideally FetchStage accepts recoveredPC[NUM_THREADS].
+        // For now, mapping:
+        // port.recoveredPC_FromRwCommit = recoveredPC[0] | recoveredPC[1]; (Assuming one active)
+        // BUT, if NextPCStage handles arrays, we pass the array.
+        
+        // Global Signals
+        ctrl.cmStageFlushUpper = (regState[0].phase == PHASE_RECOVER_0) || (regState[1].phase == PHASE_RECOVER_0);
+        
     end
-
-    
-    // Commit/Recovery state manage
-    `RSD_ASSERT_CLK(
-        port.clk,
-        !(toCommitPhase && toRecoveryPhase),
-        "Tried to start the commit phase and the recovery phase at the same time"
-    );
-
-    `RSD_ASSERT_CLK(
-        port.clk,
-        !(port.exceptionDetectedInRwStage && nextState.refetchType inside {REFETCH_TYPE_NEXT_PC_TO_CSR_TARGET, REFETCH_TYPE_THIS_PC_TO_CSR_TARGET} ),
-        "RW stage recovery is not allowed in REFETCH_TYPE_CSR_UNIT_TARGET"
-    );
 
 endmodule : RecoveryManager

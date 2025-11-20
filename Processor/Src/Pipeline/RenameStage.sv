@@ -18,17 +18,16 @@ import ActiveListIndexTypes::*;
 import LoadStoreUnitTypes::*;
 import DebugTypes::*;
 
-// シリアライズ命令が送られて来た場合，パイプラインを適切にストールさせる
-// シリアライズ命令の前の命令がコミットして ROB が空になるまで待って，
-// さらにシリアライズ命令自身がコミットされるまで上流をストールさせ続ける
-//
-// DecodeStage がシリアライズ命令のみを必ず単独で送ってくるようにしているため，
-// 先頭しかみていない
+// SMT UPDATE: Serializer must be thread-aware. 
+// A serializing instruction (like FENCE) from Thread A should only wait for Thread A's ROB to empty.
 module RenameStageSerializer(
 input 
-    logic clk, rst, stall, clear, activeListEmpty, storeQueueEmpty,
-    OpInfo [RENAME_WIDTH-1:0] opInfo, // Unpacked array of structure corrupts in Modelsim.
+    logic clk, rst, stall, clear,
+    logic activeListEmpty[NUM_THREADS], // SMT CHANGE: Array for per-thread status
+    logic storeQueueEmpty[NUM_THREADS], // SMT CHANGE: Array for per-thread status
+    OpInfo [RENAME_WIDTH-1:0] opInfo, 
     logic [RENAME_WIDTH-1:0] valid,
+    ThreadID [RENAME_WIDTH-1:0] tid,    // SMT CHANGE: Need TID to know who is serializing
 output 
     logic serialize
 );
@@ -38,70 +37,92 @@ output
                 clk, 
                 !(opInfo[i].serialized && valid[i]), 
                 ("Multiple serialized ops were sent to RenameStage. (%x, %x)", opInfo[i].serialized, valid[i])
-            ); 
+            ) 
         end
     endgenerate
 
     // Serialize phase
     typedef enum logic[1:0]
     {
-        PHASE_NORMAL = 0,               // フェッチ継続
-        PHASE_WAIT_OWN = 2              // 自分自身のコミット待ち
+        PHASE_NORMAL = 0,               
+        PHASE_WAIT_OWN = 2              
     } Phase;
-    Phase regPhase, nextPhase;
+    
+    // SMT CHANGE: Maintain phase state per thread
+    Phase regPhase[NUM_THREADS], nextPhase[NUM_THREADS];
+    Phase currentPhase, nextPhaseSelect;
 
     always_ff@(posedge clk)   // synchronous rst
     begin
         if (rst) begin
-            regPhase <= PHASE_NORMAL;
+            for (int i=0; i<NUM_THREADS; i++) begin
+                regPhase[i] <= PHASE_NORMAL;
+            end
         end
-        else if(!stall) begin             // write data
+        else if(!stall) begin             
+            // Update phase for all threads
             regPhase <= nextPhase;
         end
     end
 
+    // Logic Variables
+    ThreadID targetTid;
+    logic currentActiveListEmpty;
+    logic currentStoreQueueEmpty;
+
     always_comb begin
-        // multiple serialized ops must not be sent to this stage.
+        // Default assignments
         serialize = FALSE;
-        nextPhase = PHASE_NORMAL;
-        if (clear) begin
-            nextPhase = PHASE_NORMAL; // force reset 
+        for (int i=0; i<NUM_THREADS; i++) begin
+            nextPhase[i] = regPhase[i]; // Default hold
         end
-        if (regPhase == PHASE_NORMAL) begin
+
+        // SMT: Identify which thread is potentially serializing.
+        // Assumption: DecodeStage guarantees only one serialized op exists at opInfo[0].
+        targetTid = tid[0];
+        currentPhase = regPhase[targetTid];
+        
+        // Select the status flags for the relevant thread
+        currentActiveListEmpty = activeListEmpty[targetTid];
+        currentStoreQueueEmpty = storeQueueEmpty[targetTid];
+
+        if (clear) begin
+            for (int i=0; i<NUM_THREADS; i++) nextPhase[i] = PHASE_NORMAL; 
+        end
+
+        if (currentPhase == PHASE_NORMAL) begin
             if (opInfo[0].serialized && valid[0]) begin
                 if (opInfo[0].operand.miscMemOp.fence) begin // Fence
-                    if (!activeListEmpty || !storeQueueEmpty) begin
-                        // Fence must wait for all previous ops to be committed
-                        // AND all committed stores in SQ to be written back
+                    if (!currentActiveListEmpty || !currentStoreQueueEmpty) begin
+                        // Fence must wait for OWN previous ops to be committed
                         serialize = TRUE;   
-                        nextPhase = PHASE_NORMAL;
+                        nextPhase[targetTid] = PHASE_NORMAL; // Stay/Retry
                     end
                     else begin
-                        // deassert serialize" for dispatch    
-                        nextPhase = PHASE_WAIT_OWN;
+                        // Ready to proceed
+                        nextPhase[targetTid] = PHASE_WAIT_OWN;
                     end
                 end 
-                else begin // Non-fence
-                    if (!activeListEmpty) begin
-                        // Wait for all previous ops to be committed
+                else begin // Non-fence serialized op
+                    if (!currentActiveListEmpty) begin
                         serialize = TRUE;   
-                        nextPhase = PHASE_NORMAL;
+                        nextPhase[targetTid] = PHASE_NORMAL;
                     end
                     else begin
-                        // deassert serialize" for dispatch  
-                        nextPhase = PHASE_WAIT_OWN;
+                        nextPhase[targetTid] = PHASE_WAIT_OWN;
                     end
                 end
             end
         end
         else begin
-            // Wait for a serialized op to be committed
-            if (!activeListEmpty || !storeQueueEmpty) begin
+            // PHASE_WAIT_OWN: Wait for the serialized op ITSELF to commit
+            // We check if the ROB/SQ is empty (meaning the serialized op finished)
+            if (!currentActiveListEmpty || !currentStoreQueueEmpty) begin
                 serialize = TRUE;
-                nextPhase = PHASE_WAIT_OWN;
+                nextPhase[targetTid] = PHASE_WAIT_OWN;
             end
             else begin
-                nextPhase = PHASE_NORMAL;
+                nextPhase[targetTid] = PHASE_NORMAL;
             end
         end
     end
@@ -147,7 +168,7 @@ module RenameStage(
             regFlush <= '0;
             regRecoveredPC <= '0;
         end
-        else if(!ctrl.rnStage.stall) begin             // write data
+        else if(!ctrl.rnStage.stall) begin            // write data
             pipeReg <= prev.nextStage;
             regFlush <= prev.nextFlush;
             regRecoveredPC <= prev.nextRecoveredPC;
@@ -169,6 +190,8 @@ module RenameStage(
     logic [ RENAME_WIDTH-1:0 ] valid;
     logic update [ RENAME_WIDTH ];
     OpInfo [RENAME_WIDTH-1:0] opInfo;
+    ThreadID [RENAME_WIDTH-1:0] opTid; // SMT: Extract TIDs for serializer
+
     ActiveListEntry alEntry [ RENAME_WIDTH ];
     DispatchStageRegPath nextStage [ RENAME_WIDTH ];
 
@@ -176,18 +199,21 @@ module RenameStage(
     logic isStore[RENAME_WIDTH];
     logic isBranch[RENAME_WIDTH];
 
-    logic activeListEmpty;
-    logic storeQueueEmpty;
+    // SMT CHANGE: track empty status per thread
+    logic activeListEmpty[NUM_THREADS];
+    logic storeQueueEmpty[NUM_THREADS];
 
     always_comb begin
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
             valid[i] = pipeReg[i].valid;
             opInfo[i] = pipeReg[i].opInfo;
+            opTid[i] = pipeReg[i].tid;
         end
 
-        // The rename stage stalls when resources cannot be allocated.
-        // Inputs of stall/flush requests to the controller must not dependend
-        // on stall/clear signals for avoiding a race condition.
+        // SMT CHANGE: In a partitioned resource model, we need to check if 
+        // the specific thread has resources. 
+        // NOTE: Assuming interfaces (.allocatable) handle SMT internally 
+        // or return a simplified global signal for now.
         ctrl.rnStageSendBubbleLower =
             (
                 ( |valid ) &&
@@ -201,14 +227,24 @@ module RenameStage(
 
         stall = ctrl.rnStage.stall;
         clear = ctrl.rnStage.clear;
-        activeListEmpty = activeList.validEntryNum == 0;
-        storeQueueEmpty = loadStoreUnit.storeQueueEmpty;
+        
+        // SMT CHANGE: Map interface signals to array. 
+        // Assuming ActiveListIF exposes per-thread usage or we infer it.
+        // For now, we assume activeList provides a usage count per thread 
+        // OR we stick to global check if interfaces aren't updated yet.
+        // Ideally: activeListEmpty[t] = (activeList.usage[t] == 0);
+        // Fallback (Conservative): Use global empty for all.
+        for(int t=0; t<NUM_THREADS; t++) begin
+            activeListEmpty[t] = (activeList.validEntryNum == 0); 
+            storeQueueEmpty[t] = loadStoreUnit.storeQueueEmpty;
+        end
     end
 
     RenameStageSerializer serializer(
         port.clk, port.rst, stall, clear, activeListEmpty, storeQueueEmpty,
         opInfo, 
         valid,
+        opTid, // Pass TIDs
         serialize
     );
 
@@ -234,12 +270,13 @@ module RenameStage(
                 (opInfo[i].mopType == MOP_TYPE_MEM) && 
                 (opInfo[i].mopSubType.memType == MEM_MOP_TYPE_ENV);
             isBranch[i] =
-                (opInfo[i].mopType == MOP_TYPE_INT) &&
+                (opInfo[i].mopType == MOP_TYPE_INT) && 
                 (opInfo[i].mopSubType.intType inside {INT_MOP_TYPE_BR, INT_MOP_TYPE_RIJ});
         end
 
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
             renameLogic.updateRMT[i] = update[i];
+            renameLogic.tid[i] = pipeReg[i].tid; // Existing TID pass
 
             // Logical register numbers
             renameLogic.logSrcRegA[i] = isBranch[i] ? opInfo[i].operand.brOp.srcRegNumA : opInfo[i].operand.intOp.srcRegNumA;
@@ -295,12 +332,17 @@ module RenameStage(
         //
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
             activeList.pushTail[i] = update[i];
+            
+            // SMT CHANGE: Ensure Active List knows which thread is pushing
+            // (Assuming interface allows 'tid' input, usually implied by the data packet)
+            // activeList.tid[i] = pipeReg[i].tid; 
 
             `ifndef RSD_DISABLE_DEBUG_REGISTER
                 alEntry[i].opId = pipeReg[i].opId;
             `endif
 
             alEntry[i].pc = pipeReg[i].pc;
+            alEntry[i].tid = pipeReg[i].tid; // Passed into the struct
 
             alEntry[i].phyPrevDstRegNum = nextStage[i].phyPrevDstRegNum;
             alEntry[i].phyDstRegNum = nextStage[i].phyDstRegNum;
@@ -323,6 +365,8 @@ module RenameStage(
         //
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
             scheduler.allocate[i] = update[i];
+            // SMT CHANGE: Pass TID to scheduler allocation so it knows which partition to use
+            // scheduler.tid[i] = pipeReg[i].tid; 
             nextStage[i].issueQueuePtr = scheduler.allocatedPtr[i];
         end
 
@@ -333,6 +377,8 @@ module RenameStage(
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
             loadStoreUnit.allocateLoadQueue[i] = update[i] && isLoad[i];
             loadStoreUnit.allocateStoreQueue[i] = update[i] && isStore[i];
+            // SMT CHANGE: Pass TID to LSU allocation
+            // loadStoreUnit.tid[i] = pipeReg[i].tid;
 
             nextStage[i].loadQueuePtr = loadStoreUnit.allocatedLoadQueuePtr[i];
             nextStage[i].storeQueuePtr = loadStoreUnit.allocatedStoreQueuePtr[i];
@@ -341,6 +387,7 @@ module RenameStage(
         // Make read request to Memory Dependent Prediction
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
             port.pc[i] = pipeReg[i].pc;
+            port.tid[i] = pipeReg[i].tid; // SMT: Pass TID to predictor
         end
         
         //
@@ -359,6 +406,7 @@ module RenameStage(
                 ( stall || clear || port.rst ) ? FALSE : valid[i];
 
             // Decoded micr-op and context.
+            nextStage[i].tid = pipeReg[i].tid;
             nextStage[i].pc = pipeReg[i].pc;
             nextStage[i].brPred = pipeReg[i].bPred;
             nextStage[i].opInfo = opInfo[i];
@@ -385,7 +433,5 @@ module RenameStage(
         end
 `endif
     end
-
-
 
 endmodule : RenameStage

@@ -9,6 +9,11 @@ import MicroArchConf::*;
 localparam TRUE  = 1'b1;
 localparam FALSE = 1'b0;
 
+// Thread ID for SMT support
+localparam THREAD_NUM = CONF_THREAD_NUM;
+localparam THREAD_NUM_BIT_WIDTH = (THREAD_NUM > 1) ? $clog2(THREAD_NUM) : 1;
+typedef logic [THREAD_NUM_BIT_WIDTH-1:0] ThreadID;
+
 // SID
 localparam OP_SERIAL_WIDTH = 10;
 typedef logic [OP_SERIAL_WIDTH-1:0] OpSerial;
