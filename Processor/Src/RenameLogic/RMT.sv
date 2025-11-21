@@ -77,6 +77,8 @@ module RMT( RenameLogicIF.RMT port );
     endfunction
 
     always_comb begin
+            logic tidMatch; 
+           // tidMatch = FALSE;
         // Write data
         for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
             if ( !port.rst ) begin
@@ -108,6 +110,8 @@ module RMT( RenameLogicIF.RMT port );
         // Read data
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
             // Read RMT with using logical register number AND ThreadID
+            
+            // Initialize tidMatch for safety
             rmtRA[ RMT_REG_OPERAND_NUM*i   ] = GetBankedAddr(port.tid[i], port.logSrcRegA[i]);
             rmtRA[ RMT_REG_OPERAND_NUM*i+1 ] = GetBankedAddr(port.tid[i], port.logSrcRegB[i]);
             rmtRA[ RMT_REG_OPERAND_NUM*i+2 ] = GetBankedAddr(port.tid[i], port.logDstReg[i]);

@@ -9,7 +9,7 @@ import MemoryMapTypes::*;
 
 module RenameLogic (
     RenameLogicIF.RenameLogic port,
-    // FIX: Remove ".RenameLogic" suffix. Pass the full interface.
+    // FIX: Remove ".RenameLogic" suffix. Pass the full interface so submodules can use their modports.
     ActiveListIF activeList,      
     RecoveryManagerIF recovery    
 );
@@ -97,7 +97,7 @@ module RenameLogic (
             
             // Map inputs/outputs for the specific thread committer
             always_comb begin
-                // SMT FIX: Index signals by [t]
+                // SMT FIX: Index signals by [t] to route thread-specific control
                 committerPort.commit = port.commit[t]; 
                 committerPort.commitNum = port.commitNum[t];
                 committerPort.recoveryEntryNum = activeList.recoveryEntryNum[t];
@@ -107,7 +107,7 @@ module RenameLogic (
                 activeList.popHeadNum[t] = committerPort.popHeadNum;
                 activeList.popTailNum[t] = committerPort.popTailNum;
                 
-                // Map Output: Release signals (to be aggregated)
+                // Map Output: Release signals (to be aggregated later)
                 committerReleaseReg[t] = committerPort.releaseReg;
                 committerPhyReleasedReg[t] = committerPort.phyReleasedReg;
                 
@@ -115,11 +115,12 @@ module RenameLogic (
                 port.flushNum[t] = committerPort.flushNum;
             end
 
-            // Now this works because 'activeList' is the full interface
+            // Instantiate Committer (One per thread)
+            // Passing the generic interfaces allow Verilator/SystemVerilog to resolve modports
             RenameLogicCommitter #(.TID(t)) committer(
                 .port(committerPort.RenameLogicCommitter),
-                .activeList(activeList.RenameLogicCommitter), 
-                .recovery(recovery.RenameLogicCommitter)      
+                .activeList(activeList), 
+                .recovery(recovery)      
             );
             
             // Retirement RMT (One per thread)
@@ -132,6 +133,7 @@ module RenameLogic (
                 
                 // Read ports for Recovery
                 for(int i=0; i<RENAME_WIDTH; i++) begin
+                    // Only forward read requests if they match this thread's ID
                     if (port.tid[i] == t) begin
                          retRmtPort.retRMT_ReadReg_LogRegNum[i] = port.retRMT_ReadReg_LogRegNum[i];
                     end else begin
@@ -144,7 +146,7 @@ module RenameLogic (
         end
     endgenerate
 
-    // RMT Instantiation
+    // RMT Instantiation (Speculative Map)
     RenameLogicIF rmtPort(port.clk, port.rst, port.rstStart);
     RMT rmt(rmtPort.RMT);
     
@@ -157,6 +159,7 @@ module RenameLogic (
     always_comb begin
         
         // SMT FIX: Aggregate Release Signals (OR Logic)
+        // Since only one thread commits per cycle (Arbiter in CommitStage), we can OR them.
         for (int i = 0; i < COMMIT_WIDTH; i++) begin
              releasePhyScalarReg[i] = committerReleaseReg[0][i] | committerReleaseReg[1][i];
              
@@ -167,7 +170,7 @@ module RenameLogic (
                  releasedPhyScalarRegNum[i] = committerPhyReleasedReg[1][i];
                  
 `ifdef RSD_MARCH_FP_PIPE
-             releasePhyScalarFPReg[i] = FALSE; 
+             releasePhyScalarFPReg[i] = FALSE; // Placeholder if FP unimplemented
 `endif
         end
 
@@ -182,7 +185,7 @@ module RenameLogic (
         end
         port.phyDstReg = allocatedPhyRegNum;
 
-        // Allocatable if Global Free List OK and Local Active List OK
+        // Allocatable if Global Free List OK and Local Active List OK (for the current fetching thread)
         port.allocatable = 
             (scalarFreeListCount >= RENAME_WIDTH) &&
             activeList.allocatable[port.tid[0]]; 

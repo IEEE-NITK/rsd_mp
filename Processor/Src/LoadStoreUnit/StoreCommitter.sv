@@ -182,6 +182,20 @@ module StoreCommitter(
     StoreQueueIndexPath retiredStoreQueuePtr;
     // --- SQ stage.
     always_comb begin
+
+        nextUnfinishedStoreNum = unfinishedStoreNum;
+        isIO = FALSE;
+        isUncachable = FALSE;
+        dcWriteReq = FALSE;
+        dcWriteAddr = '0;
+        dcWriteData = '0;
+        dcWriteByteWE = '0;
+        dcWriteUncachable = FALSE;
+        
+        nextTagStagePipeReg = '0;
+        nextTagStagePipeReg.valid = FALSE;
+
+       
         retiredStoreQueuePtr =
             port.storeQueueHeadPtr +
             (tagStagePipeReg.valid ? 1 : 0) +
