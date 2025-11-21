@@ -70,17 +70,21 @@ module WakeupPipelineRegister(
     // SMT: Flush counters per thread
     logic [$clog2(ISSUE_QUEUE_INT_LATENCY):0] canBeFlushedRegCountInt[NUM_THREADS];
     logic [$clog2(ISSUE_QUEUE_MEM_LATENCY):0] canBeFlushedRegCountMem[NUM_THREADS];
-    
+
+    // NOTE: fix: sized to MEM_ISSUE_WIDTH to match later indexing
+    logic flushInt[ INT_ISSUE_WIDTH ];
+    logic flushMem[ MEM_ISSUE_WIDTH ];
+    IssueQueueIndexPath intSelectedPtr[ INT_ISSUE_WIDTH ];
+    IssueQueueIndexPath memSelectedPtr[ MEM_ISSUE_WIDTH ];
+    IssueQueueOneHotPath flushIQ_Entry;
+
     // Flush range snapshot (Per Thread)
     ActiveListIndexPath flushRangeHeadPtr[NUM_THREADS];
     ActiveListIndexPath flushRangeTailPtr[NUM_THREADS];
     logic flushAllInsns[NUM_THREADS];
-    
-    logic flushInt[ INT_ISSUE_WIDTH ];
-    logic flushMem[ LOAD_ISSUE_WIDTH ];
-    IssueQueueIndexPath intSelectedPtr[ INT_ISSUE_WIDTH ];
-    IssueQueueIndexPath memSelectedPtr[ MEM_ISSUE_WIDTH ];
-    IssueQueueOneHotPath flushIQ_Entry;
+
+    // helper signal (moved out of procedural block)
+    logic anyRecoveryNotFromRw;
 
 `ifndef RSD_SYNTHESIS
     // Don't care these values, but avoiding undefined status in Questa.
@@ -139,10 +143,15 @@ module WakeupPipelineRegister(
     endfunction
 
     always_ff @( posedge port.clk ) begin
-        if( port.rst ||(recovery.toRecoveryPhase[0] && !recovery.recoveryFromRwStage[0]) || (recovery.toRecoveryPhase[1] && !recovery.recoveryFromRwStage[1])) begin
-            // SMT Note: If ANY thread triggers a global-style reset (commit phase recovery), 
-            // we clear the wakeup pipeline. This is conservative but safe.
-            
+        // compute anyRecoveryNotFromRw
+        anyRecoveryNotFromRw = 1'b0;
+        for (int tt = 0; tt < NUM_THREADS; tt++) begin
+            if (recovery.toRecoveryPhase[tt] && !recovery.recoveryFromRwStage[tt]) begin
+                anyRecoveryNotFromRw = 1'b1;
+            end
+        end
+
+        if ( port.rst || anyRecoveryNotFromRw ) begin
             for( int i = 0; i < INT_ISSUE_WIDTH; i++ ) begin
                 for( int j = 0; j < ISSUE_QUEUE_INT_LATENCY; j++ ) begin
                     intPipeReg[i][j].valid <= FALSE;

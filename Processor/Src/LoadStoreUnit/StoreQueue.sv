@@ -60,7 +60,7 @@ module StoreQueue(
             .popCount(releaseStoreQueueHeadEntryNumMerged),
             .push(push),
             .pushCount(pushCount),
-            .setTail(recovery.toRecoveryPhase[0] || recovery.toRecoveryPhase[1]),
+            .setTail(|{recovery.toRecoveryPhase}), // Trigger on any thread
             .setTailPtr(recovery.storeQueueRecoveryTailPtr),
             .count(curCount),
             .headPtr(headPtr),

@@ -70,7 +70,7 @@ module LoadQueue(
             // this is a local hack to avoid making a linked list structure for LQ/SQ in verilog.
             // comes with the tradeooff that LQ/SQ can be partially filled with flushed entries.
 
-            .setTail(recovery.toRecoveryPhase[0] || recovery.toRecoveryPhase[1]), // Trigger on any
+            .setTail(|{recovery.toRecoveryPhase}), // Trigger on any thread)
             .setTailPtr(recovery.loadQueueRecoveryTailPtr), // Assumption: Single recovery at a time
             .count(curCount),
             .headPtr(headPtr),

@@ -51,7 +51,9 @@ module StoreCommitter(
         if(port.rst) begin
             nextPhase = PHASE_COMMIT;
         end
-        else if (recovery.toRecoveryPhase) begin
+        // Trigger if any thread requests recovery
+        else if (| {recovery.toRecoveryPhase}) begin
+
             nextPhase = PHASE_RECOVER;
         end
         else if (phase == PHASE_RECOVER ) begin

@@ -1,7 +1,6 @@
 // Copyright 2019- RSD contributors.
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 
-
 //
 // A pipeline stage for updating PC
 //
@@ -36,7 +35,7 @@ module NextPCStage(
     parameter PHASE_DELAY = 2;
     Phase phase[PHASE_DELAY];
     Phase nextPhase;
-    
+
     // SMT Note: This logic assumes global stall behavior for mispredicts.
     // Ideally duplicated per thread, but kept simple here for compatibility.
     always_ff @(posedge port.clk) begin
@@ -45,8 +44,8 @@ module NextPCStage(
                 phase[i] <= PHASE_FETCH;
             end
         end
-        // Check if ANY thread is recovering
-        else if (recovery.toRecoveryPhase[0] || recovery.toRecoveryPhase[1] || recovery.toCommitPhase[0] || recovery.toCommitPhase[1]) begin
+        // Check if ANY thread is recovering or committing
+        else if ((| recovery.toRecoveryPhase) || (| recovery.toCommitPhase)) begin
             for (int i = 0; i < PHASE_DELAY; i++) begin
                 phase[i] <= PHASE_FETCH;
             end
@@ -61,7 +60,7 @@ module NextPCStage(
 
     always_comb begin
         // Check if ANY thread is recovering
-        if (recovery.toRecoveryPhase[0] || recovery.toRecoveryPhase[1]) begin
+        if ((| recovery.toRecoveryPhase)) begin
             nextPhase = PHASE_FETCH;
         end
         else begin
@@ -92,7 +91,7 @@ module NextPCStage(
     //
     ThreadID currentThread;
     logic [THREAD_NUM_BIT_WIDTH-1:0] threadCounter;
-    
+
     // Pipeline Control
     logic stall, clear;
     logic regStall, beginStall;
@@ -127,7 +126,7 @@ module NextPCStage(
 
     PC_Path predNextPC;
     FetchStageRegPath nextStage[ FETCH_WIDTH ];
-    
+
     // Helper logic to aggregate array signals
     logic isAnyInterrupt;
     logic isAnyRecovery;
@@ -136,11 +135,11 @@ module NextPCStage(
         // Control
         stall = ctrl.npStage.stall;
         clear = ctrl.npStage.clear;
-        
+
 `ifdef RSD_STOP_FETCH_ON_PRED_MISS
-        // Check array for recovery status
+        // Check array for recovery status using reduction
         ctrl.npStageSendBubbleLower =
-            (!(recovery.toRecoveryPhase[0] || recovery.toRecoveryPhase[1]) && phase[PHASE_DELAY - 1] == PHASE_WAIT);
+            (!(| recovery.toRecoveryPhase) && phase[PHASE_DELAY - 1] == PHASE_WAIT);
 `else
         ctrl.npStageSendBubbleLower = FALSE;
 `endif
@@ -162,7 +161,7 @@ module NextPCStage(
         else begin
             writePC_FromOuter = FALSE;
         end
-        
+
         // Note: port.pcWE is now an array, handled in the PC Update block below.
     end
 
@@ -174,18 +173,12 @@ module NextPCStage(
 
         // Decide the address to input to the branch predictor
         // Priority: Recovery > Interrupt > Rename Recovery > Normal Fetch
-        
+
         predNextPC = currentPC; // Default
 
-        // SMT: Check recovery for each thread. 
-        // If multiple threads recover simultaneously, we prioritize Thread 0 
-        // (or the one corresponding to the current cycle if sophisticated).
-        if (recovery.toRecoveryPhase[0]) begin
-            // Branch misprediction or exception in T0
-            predNextPC = recovery.recoveredPC_FromRwCommit; 
-        end
-        else if (recovery.toRecoveryPhase[1]) begin
-            // Branch misprediction or exception in T1
+        // If any thread requests recovery, use the shared recovered PC.
+        // (This preserves your previous behavior that used recoveredPC_FromRwCommit.)
+        if (isAnyRecovery) begin
             predNextPC = recovery.recoveredPC_FromRwCommit;
         end
         else if (recovery.recoverFromRename) begin
@@ -198,10 +191,10 @@ module NextPCStage(
 
             for (int i = 0; i < FETCH_WIDTH; i++) begin
                 // Process of branch prediction:
-                // If BTB is hit, the instruction is predicted to be a branch. 
-                // In addition, if the branch is predicted as Taken, 
+                // If BTB is hit, the instruction is predicted to be a branch.
+                // In addition, if the branch is predicted as Taken,
                 // the address read from BTB is used as next PC.
-                if (!regStall && next.fetchStageIsValid[i] && 
+                if (!regStall && next.fetchStageIsValid[i] &&
                         next.btbHit[i] && next.brPredTaken[i]) begin
                     // Use PC from BTB
                     predNextPC = next.btbOut[i];
@@ -209,7 +202,7 @@ module NextPCStage(
                 end
             end
         end
-        
+
         // To Branch predictor
         port.predNextPC = predNextPC;
     end
@@ -219,6 +212,24 @@ module NextPCStage(
     //  Updating PC
     //
     always_comb begin
+        // -----------------------
+        // Defaults (prevent inferred latches)
+        // -----------------------
+        // Default PC input and per-thread write enables
+        port.pcIn = '0;
+        for (int t = 0; t < NUM_THREADS; t++) begin
+            port.pcWE[t] = FALSE;
+        end
+
+        // Default next-stage entries
+        for (int i = 0; i < FETCH_WIDTH; i++) begin
+`ifndef RSD_DISABLE_DEBUG_REGISTER
+            nextStage[i].sid = '0;
+`endif
+            nextStage[i].tid   = currentThread;
+            nextStage[i].pc    = '0;
+            nextStage[i].valid = FALSE;
+        end
 
         // --- PC Input Data Calculation
         if (isAnyInterrupt) begin
@@ -239,9 +250,9 @@ module NextPCStage(
             port.pcIn = predNextPC + FETCH_WIDTH*INSN_BYTE_WIDTH;
             for (int i = 1; i < FETCH_WIDTH; i++) begin
                 if (StepOverCacheLine(predNextPC, 
-                                    predNextPC+i*INSN_BYTE_WIDTH)) begin
+                                    predNextPC + i * INSN_BYTE_WIDTH)) begin
                     // When PC stepped over the border of cache line, stop there
-                    port.pcIn = predNextPC+i*INSN_BYTE_WIDTH;
+                    port.pcIn = predNextPC + i * INSN_BYTE_WIDTH;
                     break;
                 end
             end
@@ -261,18 +272,12 @@ module NextPCStage(
                 port.pcWE[t] = TRUE;
             end
             else if (recovery.recoverFromRename) begin
-                 // Assuming rename recovery targets a specific thread passed via interface,
-                 // but for now usually global/T0 in simple implementations.
-                 // Ideally: check rename recovery TID.
-                 // For this code, we enable for ALL (simultaneous update) or Current.
                  // Safe fallback: Enable for current thread if recovering from rename.
                  port.pcWE[t] = (t == currentThread); 
             end
             else if (t == currentThread) begin
                 // Normal Fetch: Only update the current thread's PC
-                // NOTE: Update even during stall in the next cases:
-                //   1) if PC is written from outside (Handled above)
-                //   2) if it is beginning of stall
+                // NOTE: beginStall and writePC_FromOuter are computed in the other always_comb block
                 port.pcWE[t] = (!stall || beginStall) && !writePC_FromOuter;
             end
             else begin
@@ -281,14 +286,15 @@ module NextPCStage(
         end
 
 
+        // Build nextStage entries (already initialized above; override fields)
         for (int i = 0; i < FETCH_WIDTH; i++) begin
 `ifndef RSD_DISABLE_DEBUG_REGISTER
             // Generate serial id for dumping
             nextStage[i].sid = curSID + i;
 `endif
             nextStage[i].tid = currentThread; // SMT: Tag instruction
-            nextStage[i].pc = predNextPC + i * INSN_BYTE_WIDTH;
-            
+            nextStage[i].pc  = predNextPC + i * INSN_BYTE_WIDTH;
+
             if (isAnyInterrupt || clear ||
                 StepOverCacheLine(predNextPC, nextStage[i].pc)) begin
                 nextStage[i].valid = FALSE;
@@ -298,8 +304,11 @@ module NextPCStage(
             end
         end
 
+        // Drive the interface structure
         port.nextStage = nextStage;
     end
+
+
 
 
     //
@@ -316,7 +325,7 @@ module NextPCStage(
             // Use the PC of this stage
             fetchAddr = ToAddrFromPC(predNextPC);
         end
-        
+
         // To I-cache
         port.icNextReadAddrIn = ToPhyAddrFromLogical(fetchAddr);
     end
@@ -335,7 +344,7 @@ module NextPCStage(
         end
 
         // Update serial ID.
-        nextSID = ( stall || clear) ? 
+        nextSID = ( stall || clear) ?
             curSID : (curSID + numValidInsns);
 
         // --- Debug Register
