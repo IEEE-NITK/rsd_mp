@@ -169,6 +169,8 @@ module DecodeStage(
     );
     
 always_comb begin
+
+        ThreadID triggeringTid; // declare before use 
         // Flush Signal
         port.nextFlush = complete && flushTriggered && !clear;
         
@@ -179,7 +181,6 @@ always_comb begin
         // We need to extract that TID.
         
         // Logic: Find the first 'insnFlushTriggering'
-        ThreadID triggeringTid;
         triggeringTid = 0; // Default
         
         for(int i=0; i<DECODE_WIDTH; i++) begin

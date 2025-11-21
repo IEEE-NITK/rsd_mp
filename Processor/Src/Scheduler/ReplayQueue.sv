@@ -380,7 +380,10 @@ module ReplayQueue(
         // SMT Update: Iterate through lanes and check flush status using the TID of each op.
         
         for (int i = 0; i < INT_ISSUE_WIDTH; i++) begin
-            ThreadID t = replayEntryOut.intData[i].tid;
+
+            ThreadID t; // declare before use
+
+            t = replayEntryOut.intData[i].tid;
             flushInt[i] = SelectiveFlushDetector(
                             canBeFlushedEntryCount[t] != 0,
                             flushRangeHeadPtr[t],
@@ -398,7 +401,10 @@ module ReplayQueue(
         end
 `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
         for (int i = 0; i < COMPLEX_ISSUE_WIDTH; i++) begin
-            ThreadID t = replayEntryOut.complexData[i].tid;
+
+            ThreadID t; // declare before use
+
+            t = replayEntryOut.complexData[i].tid;
             flushComplex[i] = SelectiveFlushDetector(
                             canBeFlushedEntryCount[t] != 0,
                             flushRangeHeadPtr[t],
@@ -416,7 +422,10 @@ module ReplayQueue(
         end
 `endif
         for (int i = 0; i < MEM_ISSUE_WIDTH; i++) begin
-            ThreadID t = replayEntryOut.memData[i].tid;
+
+            ThreadID t; // declare before use
+
+            t = replayEntryOut.memData[i].tid;
             flushMem[i] = SelectiveFlushDetector(
                             canBeFlushedEntryCount[t] != 0,
                             flushRangeHeadPtr[t],
@@ -434,7 +443,8 @@ module ReplayQueue(
         end
 `ifdef RSD_MARCH_FP_PIPE
         for (int i = 0; i < FP_ISSUE_WIDTH; i++) begin
-            ThreadID t = replayEntryOut.fpData[i].tid;
+            ThreadID t; // declare before use
+            t = replayEntryOut.fpData[i].tid;
             flushFP[i] = SelectiveFlushDetector(
                             canBeFlushedEntryCount[t] != 0,
                             flushRangeHeadPtr[t],

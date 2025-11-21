@@ -267,9 +267,12 @@ module FPExecutionStage(
 
             // From local pipeline 
             for (int j = 1; j < FP_EXEC_STAGE_DEPTH; j++) begin 
+
+                ThreadID stageTid; //declare before use
+
                 iqData[i][j] = localPipeReg[i][j-1].fpQueueData;
                 // SMT: Check TID of op in local pipeline 
-                ThreadID stageTid = localPipeReg[i][j-1].tid;
+                stageTid = localPipeReg[i][j-1].tid;
                 
                 flush[i][j] = SelectiveFlushDetector( 
                     recovery.toRecoveryPhase[stageTid], 
@@ -338,7 +341,10 @@ module FPExecutionStage(
             // ISから3ステージ後=EX1ステージでReplayを出力
             // このとき、localPipeReg[lane][0]のデータを使う
             // SMT: Flush check uses TID from localPipeReg
-            ThreadID replayTid = localPipeReg[i][0].tid;
+
+            ThreadID replayTid; //declare before use
+            
+            replayTid = localPipeReg[i][0].tid;
             
             scheduler.fpRecordEntry[i] =
                 !stall &&

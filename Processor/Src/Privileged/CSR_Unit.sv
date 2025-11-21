@@ -51,9 +51,10 @@ module CSR_Unit(
 
     always_comb begin
         
+        ThreadID accTid;
         // 1. Read Logic (Muxed by Access TID)
         // Assuming MemoryExecutionStage drives 'csrAccessTid'
-        ThreadID accTid = port.csrAccessTid;
+        accTid = port.csrAccessTid;
         
         unique case (port.csrNumber) 
             CSR_NUM_MSTATUS:    rv = csrReg[accTid].mstatus;

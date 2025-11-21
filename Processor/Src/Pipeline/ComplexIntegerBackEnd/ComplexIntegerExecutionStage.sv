@@ -195,9 +195,12 @@ module ComplexIntegerExecutionStage(
 
             // From local pipeline 
             for (int j = 1; j < COMPLEX_EXEC_STAGE_DEPTH; j++) begin 
+
+                ThreadID stageTid; //declare before use
+
                 iqData[i][j] = localPipeReg[i][j-1].complexQueueData; 
                 // SMT: Check TID from local pipe
-                ThreadID stageTid = localPipeReg[i][j-1].tid;
+                stageTid = localPipeReg[i][j-1].tid;
 
                 flush[i][j] = SelectiveFlushDetector( 
                     recovery.toRecoveryPhase[stageTid], 

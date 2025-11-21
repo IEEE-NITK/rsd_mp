@@ -297,7 +297,10 @@ module WakeupPipelineRegister(
         //
         for (int i = 0; i < INT_ISSUE_WIDTH; i++ ) begin
             // SMT: Use the stored TID to check the correct recovery array index
-            ThreadID t = intPipeReg[i][0].tid;
+
+            ThreadID t; // declare before use
+
+            t = intPipeReg[i][0].tid;
             
             flushInt[i] = SelectiveFlushDetector(
                             canBeFlushedRegCountInt[t] != 0,
@@ -313,7 +316,10 @@ module WakeupPipelineRegister(
 
 `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
         for (int i = 0; i < COMPLEX_ISSUE_WIDTH; i++) begin
-            ThreadID t = complexPipeReg[i][0].tid;
+
+            ThreadID t; // declare before use
+
+            t = complexPipeReg[i][0].tid;
             flushComplex[i] = SelectiveFlushDetector(
                             canBeFlushedRegCountComplex[t] != 0,
                             flushRangeHeadPtr[t],
@@ -330,7 +336,10 @@ module WakeupPipelineRegister(
 `ifdef RSD_MARCH_UNIFIED_LDST_MEM_PIPE
         // Store ports do not wake up consumers, thus LOAD_ISSUE_WIDTH is used.
         for (int i = 0; i < MEM_ISSUE_WIDTH; i++) begin
-            ThreadID t = memPipeReg[i][0].tid;
+
+            ThreadID t; // declare before use
+
+            t = memPipeReg[i][0].tid;
             flushMem[i] = SelectiveFlushDetector(
                             canBeFlushedRegCountMem[t] != 0,
                             flushRangeHeadPtr[t],
@@ -350,7 +359,10 @@ module WakeupPipelineRegister(
         end
 `else
         for (int i = 0; i < LOAD_ISSUE_WIDTH; i++) begin
-            ThreadID t = memPipeReg[i][0].tid;
+
+            ThreadID t; // declare before use
+
+            t = memPipeReg[i][0].tid;
             flushMem[i] = SelectiveFlushDetector(
                             canBeFlushedRegCountMem[t] != 0,
                             flushRangeHeadPtr[t],
@@ -370,7 +382,10 @@ module WakeupPipelineRegister(
 
 `ifdef RSD_MARCH_FP_PIPE
         for (int i = 0; i < FP_ISSUE_WIDTH; i++) begin
-            ThreadID t = fpPipeReg[i][0].tid;
+
+            ThreadID t; // declare before use
+
+            t = fpPipeReg[i][0].tid;
             flushFP[i] = SelectiveFlushDetector(
                             canBeFlushedRegCountFP[t] != 0,
                             flushRangeHeadPtr[t],
