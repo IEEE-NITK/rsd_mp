@@ -76,56 +76,86 @@ module RMT( RenameLogicIF.RMT port );
         return {tid, logReg}; // Concatenate TID as MSB
     endfunction
 
+    // --- RMT combinational: writes, reads, and bypass logic (with safe defaults) ---
     always_comb begin
-            logic tidMatch; 
-           // tidMatch = FALSE;
-        // Write data
+        // --- DEFAULTS: make every driven signal deterministic to avoid latches ---
+        // Default write enables / addresses / data for writes
+        for (int i = 0; i < COMMIT_WIDTH; i++) begin
+            rmtWE[i] = 1'b0;
+            rmtWA[i] = '0;
+            rmtWV[i].phyRegNum = '0;
+            rmtWV[i].regIssueQueuePtr = '0;
+        end
+
+        // Default read addresses
+        for (int i = 0; i < RMT_REG_OPERAND_NUM * RENAME_WIDTH; i++) begin
+            rmtRA[i] = '0;
+            rmtRV[i].phyRegNum = '0;
+            rmtRV[i].regIssueQueuePtr = '0;
+        end
+
+        // Default outputs (all RENAME_WIDTH entries)
+        phySrcRegA = '{default: '0};
+        phySrcRegB = '{default: '0};
+`ifdef RSD_MARCH_FP_PIPE
+        phySrcRegC = '{default: '0};
+`endif
+        phyPrevDstReg = '{default: '0};
+
+        srcIssueQueuePtrRegA = '{default: '0};
+        srcIssueQueuePtrRegB = '{default: '0};
+`ifdef RSD_MARCH_FP_PIPE
+        srcIssueQueuePtrRegC = '{default: '0};
+`endif
+
+        port.prevDependIssueQueuePtr = '{default: '0};
+        // --- end defaults -----------------------------------------------------
+
+        // --- Write data (and write-bypass protection) ------------------------
         for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
             if ( !port.rst ) begin
                 rmtWE[i] = port.rmtWriteReg[i];
                 // SMT: Combine TID and Logical Register for address
                 rmtWA[i] = GetBankedAddr(port.rmtWriteReg_Tid[i], port.rmtWriteReg_LogRegNum[i]);
-                
+
                 rmtWV[i].phyRegNum = port.rmtWriteReg_PhyRegNum[i].regNum;
-                
-                // Write to Write Bypass
+                rmtWV[i].regIssueQueuePtr = port.watWriteIssueQueuePtr[i];
+
+                // Write bypass: clear older writes to same banked address
                 for ( int j = 0; j < i; j++ ) begin
                     if ( rmtWE[i] && rmtWA[i] == rmtWA[j] ) begin
-                        rmtWE[j] = FALSE;
+                        rmtWE[j] = 1'b0;
                     end
                 end
-
-                // Write data (WAT)
-                rmtWV[i].regIssueQueuePtr = port.watWriteIssueQueuePtr[i];
             end
             else begin
-                // Reset RMT
-                rmtWE[i] = ( i == 0 ? TRUE : FALSE );
+                // Reset RMT initialization values
+                rmtWE[i] = ( i == 0 ? 1'b1 : 1'b0 );
                 rmtWA[i] = GetBankedAddr(rstWriteTid[i], rstWriteLogRegNum[i]);
                 rmtWV[i].phyRegNum = rstWritePhyRegNum[i];
                 rmtWV[i].regIssueQueuePtr = '0;
             end
         end
 
-        // Read data
+        // --- Read addresses: build banked addresses for each operand of each slot ---
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
-            // Read RMT with using logical register number AND ThreadID
-            
-            // Initialize tidMatch for safety
             rmtRA[ RMT_REG_OPERAND_NUM*i   ] = GetBankedAddr(port.tid[i], port.logSrcRegA[i]);
             rmtRA[ RMT_REG_OPERAND_NUM*i+1 ] = GetBankedAddr(port.tid[i], port.logSrcRegB[i]);
             rmtRA[ RMT_REG_OPERAND_NUM*i+2 ] = GetBankedAddr(port.tid[i], port.logDstReg[i]);
 `ifdef RSD_MARCH_FP_PIPE
             rmtRA[ RMT_REG_OPERAND_NUM*i+3 ] = GetBankedAddr(port.tid[i], port.logSrcRegC[i]);
 `endif
-            
+        end
+
+        // --- Read data -> defaulted above by rmtRV defaults; assign outputs from RAM results ---
+        for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
 `ifdef RSD_MARCH_FP_PIPE
             phySrcRegA[i].isFP        = port.logSrcRegA[i].isFP;
             phySrcRegB[i].isFP        = port.logSrcRegB[i].isFP;
             phySrcRegC[i].isFP        = port.logSrcRegC[i].isFP;
             phyPrevDstReg[i].isFP     = port.logDstReg[i].isFP;
 `endif
-            
+
             // Physical register number is read from RMT
             phySrcRegA[i].regNum    = rmtRV[ RMT_REG_OPERAND_NUM*i   ].phyRegNum;
             phySrcRegB[i].regNum    = rmtRV[ RMT_REG_OPERAND_NUM*i+1 ].phyRegNum;
@@ -141,29 +171,30 @@ module RMT( RenameLogicIF.RMT port );
 `ifdef RSD_MARCH_FP_PIPE
             srcIssueQueuePtrRegC[i] = rmtRV[RMT_REG_OPERAND_NUM*i + 3].regIssueQueuePtr;
 `endif
-            
-            // Write to Read Bypass
+
+            // Read-bypass: override with any in-flight writes (must match TID and log reg)
             for ( int j = 0; j < i; j++ ) begin
                 if ( port.rmtWriteReg[j] ) begin
-                    // SMT Check: Must match TID as well as Register Number
-                    logic tidMatch;
-                    tidMatch = (port.tid[i] == port.rmtWriteReg_Tid[j]);
-
-                    if ( tidMatch && port.logSrcRegA[i] == port.rmtWriteReg_LogRegNum[j] ) begin
+                    // Compare TID and logical reg numbers inline to avoid temporaries
+                    if ( (port.tid[i] == port.rmtWriteReg_Tid[j]) &&
+                         (port.logSrcRegA[i] == port.rmtWriteReg_LogRegNum[j]) ) begin
                         phySrcRegA[i].regNum = port.rmtWriteReg_PhyRegNum[j].regNum;
                         srcIssueQueuePtrRegA[i] = port.watWriteIssueQueuePtr[j];
                     end
-                    if ( tidMatch && port.logSrcRegB[i] == port.rmtWriteReg_LogRegNum[j] ) begin
+                    if ( (port.tid[i] == port.rmtWriteReg_Tid[j]) &&
+                         (port.logSrcRegB[i] == port.rmtWriteReg_LogRegNum[j]) ) begin
                         phySrcRegB[i].regNum = port.rmtWriteReg_PhyRegNum[j].regNum;
                         srcIssueQueuePtrRegB[i] = port.watWriteIssueQueuePtr[j];
                     end
 `ifdef RSD_MARCH_FP_PIPE
-                    if ( tidMatch && port.logSrcRegC[i] == port.rmtWriteReg_LogRegNum[j] ) begin
+                    if ( (port.tid[i] == port.rmtWriteReg_Tid[j]) &&
+                         (port.logSrcRegC[i] == port.rmtWriteReg_LogRegNum[j]) ) begin
                         phySrcRegC[i].regNum = port.rmtWriteReg_PhyRegNum[j].regNum;
                         srcIssueQueuePtrRegC[i] = port.watWriteIssueQueuePtr[j];
                     end
 `endif
-                    if ( tidMatch && port.logDstReg[i] == port.rmtWriteReg_LogRegNum[j] ) begin
+                    if ( (port.tid[i] == port.rmtWriteReg_Tid[j]) &&
+                         (port.logDstReg[i] == port.rmtWriteReg_LogRegNum[j]) ) begin
                         phyPrevDstReg[i].regNum = port.rmtWriteReg_PhyRegNum[j].regNum;
                         port.prevDependIssueQueuePtr[i] = port.watWriteIssueQueuePtr[j];
                     end
@@ -171,7 +202,7 @@ module RMT( RenameLogicIF.RMT port );
             end
         end
 
-        // To interface
+        // --- Drive outputs to interface (already defaulted and possibly overwritten) ---
         port.phySrcRegA = phySrcRegA;
         port.phySrcRegB = phySrcRegB;
 `ifdef RSD_MARCH_FP_PIPE
@@ -185,6 +216,7 @@ module RMT( RenameLogicIF.RMT port );
         port.srcIssueQueuePtrRegC = srcIssueQueuePtrRegC;
 `endif
     end
+
     
     // - Initialization logic
     // SMT: Must iterate through ALL registers of ALL threads

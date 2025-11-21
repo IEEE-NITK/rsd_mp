@@ -1,10 +1,11 @@
 // Copyright 2019- RSD contributors.
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 
-
 //
 // IssueQueue ( Allocator and payloadRAM )
 //
+
+`include "BasicMacros.sv"
 
 import BasicTypes::*;
 import PipelineTypes::*;
@@ -35,7 +36,7 @@ module IssueQueue (
 
     // 選択的フラッシュ検出
     ActiveListIndexPath alPtrReg [ ISSUE_QUEUE_ENTRY_NUM ];  //IssueQueueのActivlistPtrのフィールドを複製したレジスタ
-    
+
     // SMT: Shadow Register for TID to allow simultaneous flush checking
     ThreadID tidReg [ ISSUE_QUEUE_ENTRY_NUM ];
 
@@ -44,6 +45,7 @@ module IssueQueue (
     logic issueQueueReturnIndex;    //フリーリストにインデックスを返却中かどうか
     logic [ ISSUE_QUEUE_RETURN_INDEX_CYCLE_BIT_SIZE-1:0 ] issueQueueReturnIndexCycleCount;
     IssueQueueIndexPath returnIndexOffset;//フラッシュの判定をした後にIQのフリーリストへの返却用インデックス
+    logic triggerReturnIndex;
 
     IssueQueueIndexPath writePtr[ DISPATCH_WIDTH ];
     IssueQueueIndexPath selectedPtr [ ISSUE_WIDTH ];
@@ -51,9 +53,10 @@ module IssueQueue (
     // SMT: Trigger reset if ANY thread recovers from RW stage
     logic triggerReset;
     always_comb begin
+        // default
         triggerReset = FALSE;
         for(int t=0; t<NUM_THREADS; t++) begin
-             if(recovery.toRecoveryPhase[t] && !recovery.recoveryFromRwStage[t]) 
+             if(recovery.toRecoveryPhase[t] && !recovery.recoveryFromRwStage[t])
                  triggerReset = TRUE;
         end
     end
@@ -78,6 +81,15 @@ module IssueQueue (
         );
 
     always_comb begin
+        // --- Defaults to avoid inferred latches ------------------------------
+        port.allocatable = FALSE;
+        // default the release arrays to safe values
+        for (int i = 0; i < ISSUE_WIDTH + ISSUE_QUEUE_RETURN_INDEX_WIDTH; i++) begin
+            releaseEntry[i] = FALSE;
+            releasePtr[i] = '0;
+        end
+        // --------------------------------------------------------------------
+
         // Allocate
         // freeListReset がアサートされているリセット中に，
         // 新しくエントリを確保させるとキューがこわれるのでブロックする
@@ -95,7 +107,7 @@ module IssueQueue (
             end
             else begin
                 releaseEntry[ ISSUE_WIDTH + i ] = FALSE;
-                //Don't care
+                //Don't care - still assign deterministic value
                 releasePtr[ ISSUE_WIDTH + i ] = returnIndexOffset + i;
             end
         end
@@ -204,6 +216,29 @@ module IssueQueue (
 
 
     always_comb begin
+        // defaults to avoid latches
+        for ( int i = 0; i < INT_ISSUE_WIDTH; i++ ) begin
+            intIssuePtr[i] = '0;
+            port.intIssuedData[i] = '0;
+        end
+`ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
+        for ( int i = 0; i < COMPLEX_ISSUE_WIDTH; i++ ) begin
+            complexIssuePtr[i] = '0;
+            port.complexIssuedData[i] = '0;
+        end
+`endif
+        for ( int i = 0; i < MEM_ISSUE_WIDTH; i++ ) begin
+            memIssuePtr[i] = '0;
+            port.memIssuedData[i] = '0;
+        end
+`ifdef RSD_MARCH_FP_PIPE
+        for ( int i = 0; i < FP_ISSUE_WIDTH; i++ ) begin
+            fpIssuePtr[i] = '0;
+            port.fpIssuedData[i] = '0;
+        end
+`endif
+
+        // then copy actual values
         for ( int i = 0; i < INT_ISSUE_WIDTH; i++ ) begin
             intIssuePtr[i] = port.intIssuePtr[i];
             port.intIssuedData[i] = intIssuedData[i];
@@ -252,6 +287,9 @@ module IssueQueue (
 
     //WakeupPipelineRegisterにおいてフラッシュされた命令が後続にブロードキャストされないための判定に使う
     always_comb begin
+        // default
+        for ( int i = 0; i < ISSUE_WIDTH; i++ ) recovery.selectedActiveListPtr[i] = '0;
+
         for ( int i = 0; i < ISSUE_WIDTH; i++ ) begin
             recovery.selectedActiveListPtr[i] = alPtrReg[ selectedPtr[i] ];
         end
@@ -259,78 +297,64 @@ module IssueQueue (
 
     //synopsysの合成においてインターフェースの配列を直接使うのが怪しいので一度変数に落とす
     always_comb begin
+        // defaults
+        for (int i = 0; i < DISPATCH_WIDTH; i++) writePtr[i] = '0;
+        for (int i = 0; i < ISSUE_WIDTH; i++) selectedPtr[i] = '0;
+
         writePtr = port.writePtr;
         selectedPtr = recovery.selectedPtr;
     end
 
     //例外が発生したとき, IssueQueueの各エントリに対してフラッシュを行うかどうかを判定する
     //また, dispatchステージにある命令はすでにリネームステージでIssueQueueをアロケートしているのでそれもここで判定をする
+      // Flush evaluation and assign recovery outputs (explicit defaults to avoid latches)
     always_comb begin
-        // Flush IQ Entry
+        // ---------- defaults (must set everything used in this combinational block) ----------
+        // default flush for all entries (explicitly zero every element)
         for ( int i = 0; i < ISSUE_QUEUE_ENTRY_NUM; i++ ) begin
-            ThreadID t = tidReg[i]; // Get thread owner of this entry
+            flush[i] = 1'b0;
+        end
 
+        // default recovery outputs
+        // If recovery.flushIQ_Entry is an unpacked array this aggregate sets every element to zero.
+        recovery.flushIQ_Entry = '{default: '0};
+        recovery.issueQueueReturnIndex = 1'b0;
+        // ------------------------------------------------------------------------------------
+
+        // Compute flush for entries already in the IQ (use tidReg to determine thread owner)
+        for ( int i = 0; i < ISSUE_QUEUE_ENTRY_NUM; i++ ) begin
+            // Note: this matches single-thread semantics because tidReg[i] will be 0 when only one thread.
             flush[i] = SelectiveFlushDetector(
-                        recovery.toRecoveryPhase[t] && recovery.notIssued[i],
-                        recovery.flushRangeHeadPtr[t],
-                        recovery.flushRangeTailPtr[t],
-                        recovery.flushAllInsns[t],
+                        (recovery.toRecoveryPhase[ tidReg[i] ] && recovery.notIssued[i]),
+                        recovery.flushRangeHeadPtr[ tidReg[i] ],
+                        recovery.flushRangeTailPtr[ tidReg[i] ],
+                        recovery.flushAllInsns[ tidReg[i] ],
                         alPtrReg[i]
                         );
         end
-        
-        // Flush dispatched ops ( already allocate IQ Entry but not activate notIssued )
-        for (int i = 0; i < DISPATCH_WIDTH; i++ ) begin
-            if(port.allocated[i]) begin
-                ThreadID t = port.intWriteData[i].tid; // Get TID from dispatch data
-                
-                flush[ writePtr[i] ] = SelectiveFlushDetector(
-                            recovery.toRecoveryPhase[t],
-                            recovery.flushRangeHeadPtr[t],
-                            recovery.flushRangeTailPtr[t],
-                            recovery.flushAllInsns[t],
-                            port.writeAL_Ptr[i]
-                            );
+
+        // Compute flush for dispatched ops that have allocated an IQ entry but are not activated yet
+        for (int d = 0; d < DISPATCH_WIDTH; d++ ) begin
+            if ( port.allocated[d] ) begin
+                // use direct expressions for thread and ptr values
+                // defensive: ensure index is within range to avoid accidental out-of-bounds in simulation
+                if ( writePtr[d] < ISSUE_QUEUE_ENTRY_NUM ) begin
+                    flush[ writePtr[d] ] = SelectiveFlushDetector(
+                                recovery.toRecoveryPhase[ port.intWriteData[d].tid ],
+                                recovery.flushRangeHeadPtr[ port.intWriteData[d].tid ],
+                                recovery.flushRangeTailPtr[ port.intWriteData[d].tid ],
+                                recovery.flushAllInsns[ port.intWriteData[d].tid ],
+                                port.writeAL_Ptr[d]
+                                );
+                end
             end
         end
+
+        // Final outputs: broadcast the computed flush vector and issueQueueReturnIndex
         recovery.flushIQ_Entry = flush;
         recovery.issueQueueReturnIndex = issueQueueReturnIndex || freeListReset;
     end
 
-    // SMT: Check for RW Stage recovery trigger from ANY thread
-    logic triggerReturnIndex;
-    always_comb begin
-        triggerReturnIndex = FALSE;
-        for(int t=0; t<NUM_THREADS; t++) begin
-            // recovery.recoveryFromRwStage is arrayed in RecoveryManagerIF
-            if (recovery.toRecoveryPhase[t] && recovery.recoveryFromRwStage[t]) 
-                triggerReturnIndex = TRUE;
-        end
-    end
-
-    // Return index to FreeList
-    always_ff @( posedge port.clk ) begin
-        if ( port.rst ) begin
-            prevFlushAtRecovery <= 0;
-            issueQueueReturnIndex <= FALSE;
-            issueQueueReturnIndexCycleCount <= 0;
-        end
-        else if ( triggerReturnIndex ) begin
-            // Start of reset sequence
-            prevFlushAtRecovery <= flush;
-            issueQueueReturnIndex <= TRUE;
-            issueQueueReturnIndexCycleCount <= 0;
-        end
-        else if ( issueQueueReturnIndexCycleCount == ISSUE_QUEUE_RETURN_INDEX_CYCLE - 1 ) begin
-            // End of reset sequence
-            issueQueueReturnIndex <= FALSE;
-            issueQueueReturnIndexCycleCount <= 0;
-        end
-        else begin
-            issueQueueReturnIndex <= issueQueueReturnIndex;
-            issueQueueReturnIndexCycleCount <= issueQueueReturnIndexCycleCount + 1;
-        end
-    end
 
     always_ff @ (posedge port.clk) begin
         if (port.rst || triggerReturnIndex) begin

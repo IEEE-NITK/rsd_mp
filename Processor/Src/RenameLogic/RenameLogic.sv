@@ -9,7 +9,6 @@ import MemoryMapTypes::*;
 
 module RenameLogic (
     RenameLogicIF.RenameLogic port,
-    // FIX: Remove ".RenameLogic" suffix. Pass the full interface so submodules can use their modports.
     ActiveListIF activeList,      
     RecoveryManagerIF recovery    
 );
@@ -97,9 +96,9 @@ module RenameLogic (
             
             // Map inputs/outputs for the specific thread committer
             always_comb begin
-                // SMT FIX: Index signals by [t] to route thread-specific control
-                committerPort.commit = port.commit[t]; 
-                committerPort.commitNum = port.commitNum[t];
+                // SMT FIX: Route thread-specific control
+                committerPort.commitSingle = port.commit[t];
+                committerPort.commitNumSingle = port.commitNum[t];
                 committerPort.recoveryEntryNum = activeList.recoveryEntryNum[t];
                 committerPort.readData = activeList.readData[t]; 
                 
@@ -108,15 +107,16 @@ module RenameLogic (
                 activeList.popTailNum[t] = committerPort.popTailNum;
                 
                 // Map Output: Release signals (to be aggregated later)
-                committerReleaseReg[t] = committerPort.releaseReg;
-                committerPhyReleasedReg[t] = committerPort.phyReleasedReg;
+                for (int i = 0; i < COMMIT_WIDTH; i++) begin
+                    committerReleaseReg[t][i] = committerPort.releaseReg[i];
+                    committerPhyReleasedReg[t][i] = committerPort.phyReleasedReg[i];
+                end
                 
                 // Pass signals to CommitStage for reporting
-                port.flushNum[t] = committerPort.flushNum;
+                port.flushNum[t] = committerPort.flushNumOut;
             end
 
             // Instantiate Committer (One per thread)
-            // Passing the generic interfaces allow Verilator/SystemVerilog to resolve modports
             RenameLogicCommitter #(.TID(t)) committer(
                 .port(committerPort.RenameLogicCommitter),
                 .activeList(activeList), 
@@ -126,18 +126,20 @@ module RenameLogic (
             // Retirement RMT (One per thread)
             RenameLogicIF retRmtPort(port.clk, port.rst, port.rstStart);
             always_comb begin
-                // Write ports from CommitStage
-                retRmtPort.retRMT_WriteReg = port.retRMT_WriteReg[t];
-                retRmtPort.retRMT_WriteReg_PhyRegNum = port.retRMT_WriteReg_PhyRegNum[t];
-                retRmtPort.retRMT_WriteReg_LogRegNum = port.retRMT_WriteReg_LogRegNum[t];
+                // Write ports from CommitStage - use _Single versions
+                retRmtPort.retRMT_WriteReg_Single = port.retRMT_WriteReg[t];
+                
+                for (int i = 0; i < COMMIT_WIDTH; i++) begin
+                    retRmtPort.retRMT_WriteReg_PhyRegNum_Single[i] = port.retRMT_WriteReg_PhyRegNum[t][i];
+                    retRmtPort.retRMT_WriteReg_LogRegNum_Single[i] = port.retRMT_WriteReg_LogRegNum[t][i];
+                end
                 
                 // Read ports for Recovery
-                for(int i=0; i<RENAME_WIDTH; i++) begin
-                    // Only forward read requests if they match this thread's ID
+                for (int i = 0; i < RENAME_WIDTH; i++) begin
                     if (port.tid[i] == t) begin
-                         retRmtPort.retRMT_ReadReg_LogRegNum[i] = port.retRMT_ReadReg_LogRegNum[i];
+                        retRmtPort.retRMT_ReadReg_LogRegNum[i] = port.retRMT_ReadReg_LogRegNum[i];
                     end else begin
-                         retRmtPort.retRMT_ReadReg_LogRegNum[i] = 0;
+                        retRmtPort.retRMT_ReadReg_LogRegNum[i] = '0;
                     end
                 end
             end
@@ -150,32 +152,31 @@ module RenameLogic (
     RenameLogicIF rmtPort(port.clk, port.rst, port.rstStart);
     RMT rmt(rmtPort.RMT);
     
-    // Internal RMT control
+    // Internal RMT control - use UNPACKED arrays
     logic [ COMMIT_WIDTH-1:0 ] rmtWriteReg;
-    PRegNumPath [ COMMIT_WIDTH-1:0 ] rmtWriteReg_PhyRegNum;
-    LRegNumPath [ COMMIT_WIDTH-1:0 ] rmtWriteReg_LogRegNum;
-    ThreadID    [ COMMIT_WIDTH-1:0 ] rmtWriteReg_Tid; 
+    PRegNumPath rmtWriteReg_PhyRegNum [ COMMIT_WIDTH ];  // FIXED: unpacked
+    LRegNumPath rmtWriteReg_LogRegNum [ COMMIT_WIDTH ];  // FIXED: unpacked
+    ThreadID    rmtWriteReg_Tid [ COMMIT_WIDTH ];        // FIXED: unpacked
 
     always_comb begin
         
         // SMT FIX: Aggregate Release Signals (OR Logic)
-        // Since only one thread commits per cycle (Arbiter in CommitStage), we can OR them.
         for (int i = 0; i < COMMIT_WIDTH; i++) begin
-             releasePhyScalarReg[i] = committerReleaseReg[0][i] | committerReleaseReg[1][i];
-             
-             // Mux the data based on which commit signal is active
-             if (committerReleaseReg[0][i]) 
-                 releasedPhyScalarRegNum[i] = committerPhyReleasedReg[0][i];
-             else 
-                 releasedPhyScalarRegNum[i] = committerPhyReleasedReg[1][i];
-                 
+            releasePhyScalarReg[i] = committerReleaseReg[0][i] | committerReleaseReg[1][i];
+            
+            // Mux the data based on which commit signal is active
+            if (committerReleaseReg[0][i]) 
+                releasedPhyScalarRegNum[i] = committerPhyReleasedReg[0][i];
+            else 
+                releasedPhyScalarRegNum[i] = committerPhyReleasedReg[1][i];
+                
 `ifdef RSD_MARCH_FP_PIPE
-             releasePhyScalarFPReg[i] = FALSE; // Placeholder if FP unimplemented
+            releasePhyScalarFPReg[i] = FALSE;
 `endif
         end
 
         // Allocations
-        for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
+        for (int i = 0; i < RENAME_WIDTH; i++) begin
 `ifdef RSD_MARCH_FP_PIPE
             allocatedPhyRegNum[i].isFP = port.logDstReg[i].isFP;
             allocatedPhyRegNum[i].regNum = (port.logDstReg[i].isFP ? allocatedPhyScalarFPRegNum[i] : allocatedPhyScalarRegNum[i]);
@@ -185,14 +186,13 @@ module RenameLogic (
         end
         port.phyDstReg = allocatedPhyRegNum;
 
-        // Allocatable if Global Free List OK and Local Active List OK (for the current fetching thread)
+        // Allocatable check
         port.allocatable = 
             (scalarFreeListCount >= RENAME_WIDTH) &&
             activeList.allocatable[port.tid[0]]; 
 
-
         // Rename Writes
-        for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
+        for (int i = 0; i < RENAME_WIDTH; i++) begin
             allocatePhyReg[i] = port.updateRMT[i] && port.writeReg[i];
 `ifdef RSD_MARCH_FP_PIPE
             allocatePhyScalarReg[i] = allocatePhyReg[i] && !port.logDstReg[i].isFP;
@@ -204,19 +204,23 @@ module RenameLogic (
             rmtWriteReg[i] = port.updateRMT[i] && port.writeReg[i];
             rmtWriteReg_PhyRegNum[i] = allocatedPhyRegNum[i];
             rmtWriteReg_LogRegNum[i] = port.logDstReg[i];
-            rmtWriteReg_Tid[i] = port.tid[i]; // Pass TID
+            rmtWriteReg_Tid[i] = port.tid[i];
         end
         
-        for ( int i = RENAME_WIDTH; i < COMMIT_WIDTH; i++ ) begin
+        for (int i = RENAME_WIDTH; i < COMMIT_WIDTH; i++) begin
             rmtWriteReg[i] = FALSE;
-            rmtWriteReg_Tid[i] = 0;
+            rmtWriteReg_PhyRegNum[i] = '0;
+            rmtWriteReg_LogRegNum[i] = '0;
+            rmtWriteReg_Tid[i] = '0;
         end
         
         // Wiring RMT
         rmtPort.rmtWriteReg = rmtWriteReg;
-        rmtPort.rmtWriteReg_PhyRegNum = rmtWriteReg_PhyRegNum;
-        rmtPort.rmtWriteReg_LogRegNum = rmtWriteReg_LogRegNum;
-        rmtPort.rmtWriteReg_Tid = rmtWriteReg_Tid;
+        for (int i = 0; i < COMMIT_WIDTH; i++) begin
+            rmtPort.rmtWriteReg_PhyRegNum[i] = rmtWriteReg_PhyRegNum[i];
+            rmtPort.rmtWriteReg_LogRegNum[i] = rmtWriteReg_LogRegNum[i];
+            rmtPort.rmtWriteReg_Tid[i] = rmtWriteReg_Tid[i];
+        end
 
         rmtPort.tid = port.tid;
         rmtPort.logSrcRegA = port.logSrcRegA;

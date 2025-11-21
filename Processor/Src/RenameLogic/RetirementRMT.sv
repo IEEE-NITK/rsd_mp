@@ -15,17 +15,17 @@ module RetirementRMT #(
 
     LRegNumPath rstWriteLogRegNum[ COMMIT_WIDTH ];
     logic [ RMT_ENTRY_BIT_SIZE-1:0 ] rstWritePhyRegNum[ COMMIT_WIDTH ];
-    
+
     LRegNumPath readLogRegNum[ RENAME_WIDTH ];
     logic [ RMT_ENTRY_BIT_SIZE-1:0 ] readPhyRegNum[ RENAME_WIDTH ];
-    
+
     // SMT FIX: Use standard entry number (One instance per thread)
-    DistributedMultiPortRAM #( 
+    DistributedMultiPortRAM #(
         .ENTRY_NUM( RMT_ENTRY_NUM ),
         .ENTRY_BIT_SIZE( RMT_ENTRY_BIT_SIZE ),
         .READ_NUM( RENAME_WIDTH ),
         .WRITE_NUM( COMMIT_WIDTH )
-    ) regRMT ( 
+    ) regRMT (
         .clk( port.clk ),
         .we( we ),
         .wa( writeLogRegNum ),
@@ -33,14 +33,15 @@ module RetirementRMT #(
         .ra( readLogRegNum ),
         .rv( readPhyRegNum )
     );
-    
+
     always_comb begin
         for (int i = 0; i < COMMIT_WIDTH; i++) begin
             if ( !port.rst ) begin
-                writeLogRegNum[i] = port.retRMT_WriteReg_LogRegNum[THREAD_ID][i];
-                writePhyRegNum[i] = port.retRMT_WriteReg_PhyRegNum[THREAD_ID][i].regNum;
-                we[i] = port.retRMT_WriteReg[THREAD_ID][i];
-                
+                // <-- USE THE _Single NAMES FROM THE RetirementRMT MODPORT
+                writeLogRegNum[i] = port.retRMT_WriteReg_LogRegNum_Single[i];
+                writePhyRegNum[i] = port.retRMT_WriteReg_PhyRegNum_Single[i].regNum;
+                we[i] = port.retRMT_WriteReg_Single[i];
+
                 for (int j = 0; j < i; j++) begin
                     if (we[i] && writeLogRegNum[i] == writeLogRegNum[j])
                         we[j] = FALSE;
@@ -52,7 +53,7 @@ module RetirementRMT #(
                 we[i] = (i == 0 ? TRUE : FALSE);
             end
         end
-            
+
         for (int i = 0; i < RENAME_WIDTH; i++) begin
             readLogRegNum[i] = port.retRMT_ReadReg_LogRegNum[i];
             port.retRMT_ReadReg_PhyRegNum[i].regNum = readPhyRegNum[i];
@@ -61,7 +62,7 @@ module RetirementRMT #(
 `endif
         end
     end
-    
+
     always_ff @( posedge port.clk ) begin
         for (int i = 0; i < COMMIT_WIDTH; i++) begin
             if (port.rstStart)
@@ -70,7 +71,7 @@ module RetirementRMT #(
                 rstWriteLogRegNum[i] <= rstWriteLogRegNum[i] + 1;
         end
     end
-    
+
     // SMT FIX: Initialize with thread offset
     always_comb begin
         for (int i = 0; i < COMMIT_WIDTH; i++) begin
@@ -85,5 +86,5 @@ module RetirementRMT #(
 `endif
             rstWritePhyRegNum[i] = rstWriteLogRegNum[i].regNum + base_offset;
         end
-    end    
+    end
 endmodule

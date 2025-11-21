@@ -29,7 +29,7 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
     PRegNumPath phySrcRegC [ RENAME_WIDTH ];
 `endif
     PRegNumPath phyDstReg [ RENAME_WIDTH ];
-    PRegNumPath phyPrevDstReg [ RENAME_WIDTH ];  // For releasing a register.
+    PRegNumPath phyPrevDstReg [ RENAME_WIDTH ];
 
     // Read/Write control
     logic [ RENAME_WIDTH-1:0 ] updateRMT;
@@ -51,17 +51,22 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
     logic [ COMMIT_WIDTH-1:0 ] rmtWriteReg;
     PRegNumPath  rmtWriteReg_PhyRegNum[ COMMIT_WIDTH ];
     LRegNumPath  rmtWriteReg_LogRegNum[ COMMIT_WIDTH ];
-    ThreadID     rmtWriteReg_Tid[ COMMIT_WIDTH ]; // Added
+    ThreadID     rmtWriteReg_Tid[ COMMIT_WIDTH ];
 
-    // Retirement RMT control signals, which are generated in CommitStage.
-    logic [COMMIT_WIDTH-1:0] retRMT_WriteReg [NUM_THREADS]; // Arrayed for SMT
+    // Retirement RMT control signals (MAIN - arrayed for SMT, used by CommitStage)
+    logic [COMMIT_WIDTH-1:0] retRMT_WriteReg [NUM_THREADS];
     PRegNumPath retRMT_WriteReg_PhyRegNum [NUM_THREADS][COMMIT_WIDTH];
     LRegNumPath retRMT_WriteReg_LogRegNum [NUM_THREADS][COMMIT_WIDTH];
+
+    // Retirement RMT control signals (PER-THREAD - scalar, used by RetirementRMT modport)
+    logic [COMMIT_WIDTH-1:0] retRMT_WriteReg_Single;
+    PRegNumPath retRMT_WriteReg_PhyRegNum_Single [COMMIT_WIDTH];
+    LRegNumPath retRMT_WriteReg_LogRegNum_Single [COMMIT_WIDTH];
 
     PRegNumPath retRMT_ReadReg_PhyRegNum[RENAME_WIDTH];
     LRegNumPath retRMT_ReadReg_LogRegNum[RENAME_WIDTH];
 
-    // WAT control signals, which are generated in RenameLogic.
+    // WAT control signals
     logic [RENAME_WIDTH-1 : 0] watWriteRegFromPipeReg;
     IssueQueueIndexPath  watWriteIssueQueuePtrFromPipeReg[ RENAME_WIDTH ];
     IssueQueueIndexPath srcIssueQueuePtrRegA[ RENAME_WIDTH ];
@@ -78,16 +83,21 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
     LRegNumPath watWriteLogRegNum[ COMMIT_WIDTH ];
     IssueQueueIndexPath  watWriteIssueQueuePtr[ COMMIT_WIDTH ];
 
-    // Commitment/recovery
+    // Commitment/recovery (arrayed for SMT)
     logic commit [NUM_THREADS];
     CommitLaneCountPath commitNum [NUM_THREADS];
     CommitLaneCountPath flushNum [NUM_THREADS];
 
-    // Interface for Committers (Internal)
-    ActiveListEntry readData [COMMIT_WIDTH]; // Temp wire for committer
-    ActiveListCountPath recoveryEntryNum;   // Temp wire for committer
+    // Interface for Committers (Internal) - per-thread scalar signals
+    ActiveListEntry readData [COMMIT_WIDTH];
+    ActiveListCountPath recoveryEntryNum;
     CommitLaneCountPath popHeadNum;
     CommitLaneCountPath popTailNum;
+
+    // Per-thread committer access
+    logic commitSingle;
+    CommitLaneCountPath commitNumSingle;
+    CommitLaneCountPath flushNumOut;
 
     // To a rename logic
     modport RenameLogic(
@@ -102,18 +112,18 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         retRMT_ReadReg_PhyRegNum,
         tid,
         logDstReg,
-        logSrcRegA,       // Fix
-        logSrcRegB,       // Fix
+        logSrcRegA,
+        logSrcRegB,
 `ifdef RSD_MARCH_FP_PIPE
-        logSrcRegC,       // Fix
+        logSrcRegC,
 `endif
         watWriteRegFromPipeReg,
         watWriteIssueQueuePtrFromPipeReg,
-        commit,           // Fix
-        commitNum,        // Fix
-        retRMT_WriteReg,         // Fix
-        retRMT_WriteReg_PhyRegNum, // Fix
-        retRMT_WriteReg_LogRegNum, // Fix
+        commit,
+        commitNum,
+        retRMT_WriteReg,
+        retRMT_WriteReg_PhyRegNum,
+        retRMT_WriteReg_LogRegNum,
     output
         allocatable,
         phyDstReg,
@@ -125,19 +135,19 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         watWriteReg,
         watWriteLogRegNum,
         watWriteIssueQueuePtr,
-        phySrcRegA,       // Fix
-        phySrcRegB,       // Fix
+        phySrcRegA,
+        phySrcRegB,
 `ifdef RSD_MARCH_FP_PIPE
-        phySrcRegC,       // Fix
+        phySrcRegC,
 `endif
-        phyPrevDstReg,           // Fix
-        srcIssueQueuePtrRegA,    // Fix
-        srcIssueQueuePtrRegB,    // Fix
+        phyPrevDstReg,
+        srcIssueQueuePtrRegA,
+        srcIssueQueuePtrRegB,
 `ifdef RSD_MARCH_FP_PIPE
-        srcIssueQueuePtrRegC,    // Fix
+        srcIssueQueuePtrRegC,
 `endif
-        prevDependIssueQueuePtr,  // Fix
-        flushNum                 // Fix
+        prevDependIssueQueuePtr,
+        flushNum
     );
 
     modport RenameStage(
@@ -192,26 +202,27 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
     input
         clk,
         rst,
-        commit,
-        commitNum,
-        readData,         // Fix
-        recoveryEntryNum, // Fix
+        commitSingle,
+        commitNumSingle,
+        readData,
+        recoveryEntryNum,
     output
         releaseReg,
         phyReleasedReg,
-        flushNum,
-        popHeadNum, // Fix
-        popTailNum  // Fix
+        flushNumOut,
+        popHeadNum,
+        popTailNum
     );
 
+    // FIXED: Use _Single versions for per-thread RetirementRMT
     modport RetirementRMT(
     input
         clk,
         rst,
         rstStart,
-        retRMT_WriteReg,
-        retRMT_WriteReg_PhyRegNum,
-        retRMT_WriteReg_LogRegNum,
+        retRMT_WriteReg_Single,
+        retRMT_WriteReg_PhyRegNum_Single,
+        retRMT_WriteReg_LogRegNum_Single,
         retRMT_ReadReg_LogRegNum,
     output
         retRMT_ReadReg_PhyRegNum
@@ -225,7 +236,7 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         rmtWriteReg,
         rmtWriteReg_PhyRegNum,
         rmtWriteReg_LogRegNum,
-        rmtWriteReg_Tid, // Added to input
+        rmtWriteReg_Tid,
         watWriteReg,
         watWriteLogRegNum,
         watWriteIssueQueuePtr,

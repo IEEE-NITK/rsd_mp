@@ -124,15 +124,15 @@ module RenameLogicCommitter #(
 
             // Pop the head entries of the active list and release registers
             // to the free lists in the rename logic.
-            if ( port.commit[TID] ) begin
-                activeList.popHeadNum[TID] = port.commitNum[TID]; // SMT Indexing
+        if ( port.commitSingle ) begin
+            activeList.popHeadNum[TID] = port.commitNumSingle;// SMT Indexing
             end
             else begin
                 activeList.popHeadNum[TID] = 0; // SMT Indexing
             end
 
             for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
-                if( port.commit[TID] && i < port.commitNum[TID]) begin
+                if( port.commitSingle && i < port.commitNumSingle) begin 
                     // A head op can commit.
                     // Release registers to the free lists.
                     nextReleasedReg[i].releaseReg = alReadData[i].writeReg;
@@ -218,7 +218,7 @@ module RenameLogicCommitter #(
             end
         end
 
-        port.flushNum = flushNum;
+        port.flushNumOut = flushNum;
     end
 
 endmodule

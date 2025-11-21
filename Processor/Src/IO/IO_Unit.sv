@@ -22,6 +22,11 @@ module IO_Unit(
     // Timer register
     TimerRegsters tmReg;
     TimerRegsters tmNext;
+    
+    // For comparison - use simple logic vector
+    logic [TIMER_REGISTER_WIDTH-1:0] mtime_val;
+    logic [TIMER_REGISTER_WIDTH-1:0] mtimecmp_val;
+
     always_ff@(posedge port.clk) begin
         if (port.rst) begin
             tmReg <= '0;
@@ -34,6 +39,8 @@ module IO_Unit(
     PhyRawAddrPath phyRawReadAddr, phyRawWriteAddr;
 
     always_comb begin
+        logic cmp_ge;
+        cmp_ge = 0;
         phyRawReadAddr = port.ioReadAddrIn.addr;
         phyRawWriteAddr = port.ioWriteAddrIn.addr;
 
@@ -41,9 +48,22 @@ module IO_Unit(
         tmNext = tmReg;
         tmNext.mtime.raw = tmNext.mtime.raw + 1;
 
-        // Generate a timer interrupt signal
-        csrUnit.reqTimerInterrupt = 
-            tmNext.mtime.raw >= tmNext.mtimecmp.raw ? TRUE : FALSE;
+        // FIXED: Cast to simple logic vector for comparison
+// Use packed raw fields (guaranteed to be a packed vector)
+// Manual MSB-first compare (returns 1 if >=)
+
+for (int k = TIMER_REGISTER_WIDTH-1; k >= 0; k--) begin
+    if (tmNext.mtime.raw[k] != tmNext.mtimecmp.raw[k]) begin
+        cmp_ge = tmNext.mtime.raw[k]; // if my bit is 1 and cmp bit 0 => greater
+        break;
+    end
+end
+for (int t = 0; t < NUM_THREADS; t++) begin
+    csrUnit.reqTimerInterrupt[t] = cmp_ge;
+end
+
+
+
         //$display("time, cmp: %d, %d", tmNext.mtime.raw, tmNext.mtimecmp.raw);
 
         // Write a timer regsiter
