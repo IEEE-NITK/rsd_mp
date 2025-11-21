@@ -13,19 +13,19 @@
 
 `timescale 1ns / 1ps
 
-import DumperTypes::*;
 import BasicTypes::*;
-import CacheSystemTypes::*;
-import MemoryTypes::*;
 import MemoryMapTypes::*;
+import MemoryTypes::*;
 import PipelineTypes::*;
-import RenameLogicTypes::*;
 import SchedulerTypes::*;
+import RenameLogicTypes::*;
 import ActiveListIndexTypes::*;
 import MicroOpTypes::*;
 import LoadStoreUnitTypes::*;
+import CacheSystemTypes::*;
 import IO_UnitTypes::*;
 import DebugTypes::*;
+import DumperTypes::*;
 
 parameter STEP = 8;
 parameter HOLD = 2;
@@ -269,44 +269,50 @@ module TestSMT_DualThreadRoundRobin;
 
   // Generate round-robin test report
   task GenerateRoundRobinReport();
-    integer file_handle;
-
-    file_handle = $fopen(roundRobinReportFileName, "w");
-
-    $fprintf(file_handle, "=================================================\n");
-    $fprintf(file_handle, "SMT Round-Robin Fetch Test Report\n");
-    $fprintf(file_handle, "=================================================\n\n");
-
-    $fprintf(file_handle, "Configuration:\n");
-    $fprintf(file_handle, "  Thread 0 Start PC: 0x%08x\n", PC_THREAD_0);
-    $fprintf(file_handle, "  Thread 1 Start PC: 0x%08x\n", PC_THREAD_1);
-    $fprintf(file_handle, "  Number of Threads: %d\n", NUM_THREADS);
-    $fprintf(file_handle, "  Test Duration: %d cycles\n\n", cycle);
-
-    $fprintf(file_handle, "----- Fetch Pattern Analysis -----\n");
-    $fprintf(file_handle, "Total fetch cycles recorded: %d\n\n", rrVerificationIdx);
-
-    // Count consecutive correct pattern matches
-    integer correctPatternCycles = 0;
-    for (int i = 0; i < rrVerificationIdx; i++) begin
-      integer expectedThread = (i % NUM_THREADS);
-      if (rrVerification[i].selectedThread == expectedThread) begin
-        correctPatternCycles++;
+      integer file_handle;
+      integer i;
+      integer correctPatternCycles;
+      integer expectedThread;
+      PC_Path thread0PCFirst;
+      PC_Path thread1PCFirst;
+      integer t0PCErrors;
+      integer t1PCErrors;
+      
+      file_handle = $fopen(roundRobinReportFileName, "w");
+      
+      correctPatternCycles = 0;
+      thread0PCFirst = 32'hXXXXXXXX;
+      thread1PCFirst = 32'hXXXXXXXX;
+      t0PCErrors = 0;
+      t1PCErrors = 0;
+      
+      $fprintf(file_handle, "=================================================\n");
+      $fprintf(file_handle, "SMT Round-Robin Fetch Test Report\n");
+      $fprintf(file_handle, "=================================================\n\n");
+      
+      $fprintf(file_handle, "Configuration:\n");
+      $fprintf(file_handle, "  Thread 0 Start PC: 0x%08x\n", PC_THREAD_0);
+      $fprintf(file_handle, "  Thread 1 Start PC: 0x%08x\n", PC_THREAD_1);
+      $fprintf(file_handle, "  Number of Threads: %d\n", NUM_THREADS);
+      $fprintf(file_handle, "  Test Duration: %d cycles\n\n", cycle);
+      
+      $fprintf(file_handle, "----- Fetch Pattern Analysis -----\n");
+      $fprintf(file_handle, "Total fetch cycles recorded: %d\n\n", rrVerificationIdx);
+      
+      // Count consecutive correct pattern matches
+      for (i = 0; i < rrVerificationIdx; i++) begin
+          expectedThread = (i % NUM_THREADS);
+          if (rrVerification[i].selectedThread == expectedThread) begin
+              correctPatternCycles++;
+          end
       end
-    end
+      
+      $fprintf(file_handle, "Round-robin pattern accuracy: %d/%d (%.1f%%)\n\n", correctPatternCycles,
+               rrVerificationIdx, (correctPatternCycles * 100.0) / rrVerificationIdx);
+      
+      $fprintf(file_handle, "----- PC Verification -----\n");
 
-    $fprintf(file_handle, "Round-robin pattern accuracy: %d/%d (%.1f%%)\n\n", correctPatternCycles,
-             rrVerificationIdx, (correctPatternCycles * 100.0) / rrVerificationIdx);
-
-    $fprintf(file_handle, "----- PC Verification -----\n");
-
-    // Verify PC consistency per thread
-    PC_Path thread0PCFirst = 32'hXXXXXXXX;
-    PC_Path thread1PCFirst = 32'hXXXXXXXX;
-    integer t0PCErrors = 0;
-    integer t1PCErrors = 0;
-
-    for (int i = 0; i < rrVerificationIdx; i++) begin
+    for (i = 0; i < rrVerificationIdx; i++) begin
       if (rrVerification[i].selectedThread == 0) begin
         if (thread0PCFirst == 32'hXXXXXXXX) begin
           thread0PCFirst = rrVerification[i].actualPC;
@@ -325,13 +331,13 @@ module TestSMT_DualThreadRoundRobin;
         end
       end
     end
-
+    
     $fprintf(file_handle, "\nPC Error Analysis:\n");
     $fprintf(file_handle, "  Thread 0 PC errors: %d\n", t0PCErrors);
     $fprintf(file_handle, "  Thread 1 PC errors: %d\n\n", t1PCErrors);
-
+    
     $fprintf(file_handle, "----- Sample Fetch Sequence -----\n");
-    for (int i = 0; i < 20 && i < rrVerificationIdx; i++) begin
+    for (i = 0; i < 20 && i < rrVerificationIdx; i++) begin
       $fprintf(file_handle, "Cycle %3d: Thread %d, PC = 0x%08x\n", rrVerification[i].cycleNumber,
                rrVerification[i].selectedThread, rrVerification[i].actualPC);
     end
@@ -717,8 +723,17 @@ module TestSMT_RoundRobinPrefetch;
   task GeneratePrefetchReport();
     integer file_handle;
     integer i;
-    integer t0_fetches = 0, t1_fetches = 0;
-    logic alternating = 1'b1;
+    integer t0_fetches;
+    integer t1_fetches;
+    logic alternating;
+    PC_Path last_t0_pc;
+    PC_Path last_t1_pc;
+
+    t0_fetches = 0;
+    t1_fetches = 0;
+    alternating = 1'b1;
+    last_t0_pc = 32'hXXXXXXXX;
+    last_t1_pc = 32'hXXXXXXXX;
 
     file_handle = $fopen(PREFETCH_REPORT_FILE, "w");
 
@@ -768,8 +783,6 @@ module TestSMT_RoundRobinPrefetch;
     end
 
     $fprintf(file_handle, "\n----- PC Progression -----\n");
-    PC_Path last_t0_pc = 32'hXXXXXXXX;
-    PC_Path last_t1_pc = 32'hXXXXXXXX;
     for (i = 0; i < prefetchTraceIdx && i < 20; i++) begin
       if (prefetchTrace[i].threadID == 0) begin
         last_t0_pc = prefetchTrace[i].pc;
