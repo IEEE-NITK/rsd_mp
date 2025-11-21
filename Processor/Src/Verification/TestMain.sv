@@ -272,7 +272,8 @@ module TestMain;
                         for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
                             if ( main.main.core.cmStage.commit[i] ) begin
                                 GetCommittedRegisterValue( i, regData );
-                                registerFileCSV_Dumper.Dump( main.main.core.cmStage.alReadData[i].pc, regData );
+                               // SMT FIX: Select Thread 0 for CSV dumping (or loop over threads if you want both)
+                                registerFileCSV_Dumper.Dump( main.main.core.cmStage.alReadData[0][i].pc, regData );                         
                             end
                         end
                     end

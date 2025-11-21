@@ -9,29 +9,39 @@ import MemoryMapTypes::*;
 
 module RenameLogic (
     RenameLogicIF.RenameLogic port,
-    ActiveListIF.RenameLogic activeList,
-    RecoveryManagerIF.RenameLogic recovery
+    // FIX: Remove ".RenameLogic" suffix. Pass the full interface.
+    ActiveListIF activeList,      
+    RecoveryManagerIF recovery    
 );
 
+    //
+    // --- Resource Allocation Signals
+    //
     logic allocatePhyReg [ RENAME_WIDTH ];
     PRegNumPath allocatedPhyRegNum [ RENAME_WIDTH ];
+
     logic allocatePhyScalarReg [ RENAME_WIDTH ];
     PScalarRegNumPath allocatedPhyScalarRegNum [ RENAME_WIDTH ];
     
-    // Aggregated release signals
+    // Aggregated release signals (combining all threads)
     logic releasePhyScalarReg [ COMMIT_WIDTH ];
     PScalarRegNumPath releasedPhyScalarRegNum [ COMMIT_WIDTH ];
     ScalarFreeListCountPath scalarFreeListCount;
-    
+
 `ifdef RSD_MARCH_FP_PIPE
     logic allocatePhyScalarFPReg [ RENAME_WIDTH ];
     PScalarFPRegNumPath allocatedPhyScalarFPRegNum [ RENAME_WIDTH ];
+    
     logic releasePhyScalarFPReg [ COMMIT_WIDTH ];
     PScalarFPRegNumPath releasedPhyScalarFPRegNum [ COMMIT_WIDTH ];
     ScalarFPFreeListCountPath scalarFPFreeListCount;
 `endif
 
-    // Free lists
+    ActiveListEntry alReadData [NUM_THREADS][ COMMIT_WIDTH ];
+
+    //
+    // --- Free lists for registers (SHARED Resource)
+    //
     MultiWidthFreeList #(
         .SIZE( SCALAR_FREE_LIST_ENTRY_NUM ),
         .ENTRY_BIT_SIZE( PSCALAR_NUM_BIT_WIDTH ),
@@ -43,8 +53,10 @@ module RenameLogic (
         .rst( port.rst ),
         .rstStart( port.rstStart ),
         .count( scalarFreeListCount ),
+
         .pop( allocatePhyScalarReg ),
         .poppedData( allocatedPhyScalarRegNum ),
+
         .push( releasePhyScalarReg ),
         .pushedData( releasedPhyScalarRegNum )
     );
@@ -61,59 +73,73 @@ module RenameLogic (
         .rst( port.rst ),
         .rstStart( port.rstStart ),
         .count( scalarFPFreeListCount ),
+
         .pop( allocatePhyScalarFPReg ),
         .poppedData( allocatedPhyScalarFPRegNum ),
+
         .push( releasePhyScalarFPReg ),
         .pushedData( releasedPhyScalarFPRegNum )
     );
 `endif
 
-    // Internal signals to connect Committers
+    //
+    // --- RMT & Retirement RMT Instantiation
+    //
+    
+    // Internal signals to connect RMT and Committers
     logic [NUM_THREADS-1:0][COMMIT_WIDTH-1:0] committerReleaseReg;
     PRegNumPath [NUM_THREADS-1:0][COMMIT_WIDTH-1:0] committerPhyReleasedReg;
     
-    // Generate Committers per Thread
+    // SMT: Generate Committers per Thread
     generate
         for (genvar t = 0; t < NUM_THREADS; t++) begin : gen_committer
             RenameLogicIF committerPort(port.clk, port.rst, port.rstStart);
             
+            // Map inputs/outputs for the specific thread committer
             always_comb begin
-                committerPort.commit = port.commit[t];
+                // SMT FIX: Index signals by [t]
+                committerPort.commit = port.commit[t]; 
                 committerPort.commitNum = port.commitNum[t];
                 committerPort.recoveryEntryNum = activeList.recoveryEntryNum[t];
-                committerPort.readData = activeList.readData[t];
+                committerPort.readData = activeList.readData[t]; 
                 
+                // Map Output: ActiveList pop controls
                 activeList.popHeadNum[t] = committerPort.popHeadNum;
                 activeList.popTailNum[t] = committerPort.popTailNum;
                 
+                // Map Output: Release signals (to be aggregated)
                 committerReleaseReg[t] = committerPort.releaseReg;
                 committerPhyReleasedReg[t] = committerPort.phyReleasedReg;
                 
+                // Pass signals to CommitStage for reporting
                 port.flushNum[t] = committerPort.flushNum;
             end
 
+            // Now this works because 'activeList' is the full interface
             RenameLogicCommitter #(.TID(t)) committer(
                 .port(committerPort.RenameLogicCommitter),
-                .activeList(activeList.RenameLogicCommitter),
-                .recovery(recovery.RenameLogicCommitter)
+                .activeList(activeList.RenameLogicCommitter), 
+                .recovery(recovery.RenameLogicCommitter)      
             );
             
             // Retirement RMT (One per thread)
             RenameLogicIF retRmtPort(port.clk, port.rst, port.rstStart);
             always_comb begin
+                // Write ports from CommitStage
                 retRmtPort.retRMT_WriteReg = port.retRMT_WriteReg[t];
                 retRmtPort.retRMT_WriteReg_PhyRegNum = port.retRMT_WriteReg_PhyRegNum[t];
                 retRmtPort.retRMT_WriteReg_LogRegNum = port.retRMT_WriteReg_LogRegNum[t];
                 
+                // Read ports for Recovery
                 for(int i=0; i<RENAME_WIDTH; i++) begin
-                    if (port.tid[i] == t) 
+                    if (port.tid[i] == t) begin
                          retRmtPort.retRMT_ReadReg_LogRegNum[i] = port.retRMT_ReadReg_LogRegNum[i];
-                    else 
+                    end else begin
                          retRmtPort.retRMT_ReadReg_LogRegNum[i] = 0;
+                    end
                 end
             end
             
-            // SMT FIX: Pass TID parameter for correct reset initialization
             RetirementRMT #(.THREAD_ID(t)) retRMT(retRmtPort.RetirementRMT);
         end
     endgenerate
@@ -131,7 +157,6 @@ module RenameLogic (
     always_comb begin
         
         // SMT FIX: Aggregate Release Signals (OR Logic)
-        // Since only one thread commits per cycle, we can safely OR the signals.
         for (int i = 0; i < COMMIT_WIDTH; i++) begin
              releasePhyScalarReg[i] = committerReleaseReg[0][i] | committerReleaseReg[1][i];
              
@@ -142,7 +167,6 @@ module RenameLogic (
                  releasedPhyScalarRegNum[i] = committerPhyReleasedReg[1][i];
                  
 `ifdef RSD_MARCH_FP_PIPE
-             // FP Release Logic (Placeholder - similar OR logic needed)
              releasePhyScalarFPReg[i] = FALSE; 
 `endif
         end
@@ -189,7 +213,7 @@ module RenameLogic (
         rmtPort.rmtWriteReg = rmtWriteReg;
         rmtPort.rmtWriteReg_PhyRegNum = rmtWriteReg_PhyRegNum;
         rmtPort.rmtWriteReg_LogRegNum = rmtWriteReg_LogRegNum;
-        rmtPort.rmtWriteReg_Tid = rmtWriteReg_Tid; // SMT FIX: Wired to interface
+        rmtPort.rmtWriteReg_Tid = rmtWriteReg_Tid;
 
         rmtPort.tid = port.tid;
         rmtPort.logSrcRegA = port.logSrcRegA;

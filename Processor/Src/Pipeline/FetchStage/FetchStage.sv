@@ -174,7 +174,7 @@ module FetchStage(
         
         // Pass through thread IDs to interface (needed for BTB/Pred updates)
         for ( int i = 0; i < FETCH_WIDTH; i++ ) begin
-            port.fetchThreadId[i] = nextStage[i].tid;
+            port.fetchThreadID[i] = nextStage[i].tid;
         end
     end
 

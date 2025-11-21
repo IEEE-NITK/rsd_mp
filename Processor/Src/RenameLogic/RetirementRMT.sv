@@ -37,9 +37,9 @@ module RetirementRMT #(
     always_comb begin
         for (int i = 0; i < COMMIT_WIDTH; i++) begin
             if ( !port.rst ) begin
-                writeLogRegNum[i] = port.retRMT_WriteReg_LogRegNum[i];
-                writePhyRegNum[i] = port.retRMT_WriteReg_PhyRegNum[i].regNum;
-                we[i] = port.retRMT_WriteReg[i];
+                writeLogRegNum[i] = port.retRMT_WriteReg_LogRegNum[THREAD_ID][i];
+                writePhyRegNum[i] = port.retRMT_WriteReg_PhyRegNum[THREAD_ID][i].regNum;
+                we[i] = port.retRMT_WriteReg[THREAD_ID][i];
                 
                 for (int j = 0; j < i; j++) begin
                     if (we[i] && writeLogRegNum[i] == writeLogRegNum[j])

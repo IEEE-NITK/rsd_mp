@@ -192,7 +192,8 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
         releaseLoadQueue,
         releaseLoadQueueEntryNum,
         executedStoreMemAccessMode,
-        executedLoadTid, // SMT
+        executedLoadTid, 
+        executedStoreTid, // SMT
     output
         allocatedLoadQueuePtr,
         loadQueueAllocatable,

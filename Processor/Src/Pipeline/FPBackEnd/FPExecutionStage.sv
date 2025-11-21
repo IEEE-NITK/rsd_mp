@@ -231,8 +231,13 @@ module FPExecutionStage(
     end
 
     always_comb begin
+
+        ThreadID replayTid; 
+        ThreadID stageTid;
+
         stall = ctrl.backEnd.stall;
         clear = ctrl.backEnd.clear;
+              
 
         for ( int i = 0; i < FP_ISSUE_WIDTH; i++ ) begin
             iqData[i][0] = pipeReg[i].fpQueueData;
@@ -267,8 +272,6 @@ module FPExecutionStage(
 
             // From local pipeline 
             for (int j = 1; j < FP_EXEC_STAGE_DEPTH; j++) begin 
-
-                ThreadID stageTid; //declare before use
 
                 iqData[i][j] = localPipeReg[i][j-1].fpQueueData;
                 // SMT: Check TID of op in local pipeline 
@@ -342,7 +345,6 @@ module FPExecutionStage(
             // このとき、localPipeReg[lane][0]のデータを使う
             // SMT: Flush check uses TID from localPipeReg
 
-            ThreadID replayTid; //declare before use
             
             replayTid = localPipeReg[i][0].tid;
             

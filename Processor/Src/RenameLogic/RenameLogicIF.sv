@@ -47,22 +47,21 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
     // There are enough resources to rename.
     logic allocatable;
 
-    // RMT control signals
+    // RMT control signals, which are generated in RenameLogic.
     logic [ COMMIT_WIDTH-1:0 ] rmtWriteReg;
     PRegNumPath  rmtWriteReg_PhyRegNum[ COMMIT_WIDTH ];
     LRegNumPath  rmtWriteReg_LogRegNum[ COMMIT_WIDTH ];
-    // SMT FIX: Added this signal so RMT.sv can compile
-    ThreadID     rmtWriteReg_Tid[ COMMIT_WIDTH ]; 
+    ThreadID     rmtWriteReg_Tid[ COMMIT_WIDTH ]; // Added
 
-    // Retirement RMT control signals
-    logic [COMMIT_WIDTH-1:0] retRMT_WriteReg;
-    PRegNumPath retRMT_WriteReg_PhyRegNum[COMMIT_WIDTH];
-    LRegNumPath retRMT_WriteReg_LogRegNum[COMMIT_WIDTH];
+    // Retirement RMT control signals, which are generated in CommitStage.
+    logic [COMMIT_WIDTH-1:0] retRMT_WriteReg [NUM_THREADS]; // Arrayed for SMT
+    PRegNumPath retRMT_WriteReg_PhyRegNum [NUM_THREADS][COMMIT_WIDTH];
+    LRegNumPath retRMT_WriteReg_LogRegNum [NUM_THREADS][COMMIT_WIDTH];
 
     PRegNumPath retRMT_ReadReg_PhyRegNum[RENAME_WIDTH];
     LRegNumPath retRMT_ReadReg_LogRegNum[RENAME_WIDTH];
 
-    // WAT control signals
+    // WAT control signals, which are generated in RenameLogic.
     logic [RENAME_WIDTH-1 : 0] watWriteRegFromPipeReg;
     IssueQueueIndexPath  watWriteIssueQueuePtrFromPipeReg[ RENAME_WIDTH ];
     IssueQueueIndexPath srcIssueQueuePtrRegA[ RENAME_WIDTH ];
@@ -80,9 +79,15 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
     IssueQueueIndexPath  watWriteIssueQueuePtr[ COMMIT_WIDTH ];
 
     // Commitment/recovery
-    logic commit;
-    CommitLaneCountPath commitNum;
-    CommitLaneCountPath flushNum;
+    logic commit [NUM_THREADS];
+    CommitLaneCountPath commitNum [NUM_THREADS];
+    CommitLaneCountPath flushNum [NUM_THREADS];
+
+    // Interface for Committers (Internal)
+    ActiveListEntry readData [COMMIT_WIDTH]; // Temp wire for committer
+    ActiveListCountPath recoveryEntryNum;   // Temp wire for committer
+    CommitLaneCountPath popHeadNum;
+    CommitLaneCountPath popTailNum;
 
     // To a rename logic
     modport RenameLogic(
@@ -97,8 +102,18 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         retRMT_ReadReg_PhyRegNum,
         tid,
         logDstReg,
+        logSrcRegA,       // Fix
+        logSrcRegB,       // Fix
+`ifdef RSD_MARCH_FP_PIPE
+        logSrcRegC,       // Fix
+`endif
         watWriteRegFromPipeReg,
         watWriteIssueQueuePtrFromPipeReg,
+        commit,           // Fix
+        commitNum,        // Fix
+        retRMT_WriteReg,         // Fix
+        retRMT_WriteReg_PhyRegNum, // Fix
+        retRMT_WriteReg_LogRegNum, // Fix
     output
         allocatable,
         phyDstReg,
@@ -106,10 +121,23 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         rmtWriteReg,
         rmtWriteReg_PhyRegNum,
         rmtWriteReg_LogRegNum,
-        rmtWriteReg_Tid, // Added to output
+        rmtWriteReg_Tid,
         watWriteReg,
         watWriteLogRegNum,
-        watWriteIssueQueuePtr
+        watWriteIssueQueuePtr,
+        phySrcRegA,       // Fix
+        phySrcRegB,       // Fix
+`ifdef RSD_MARCH_FP_PIPE
+        phySrcRegC,       // Fix
+`endif
+        phyPrevDstReg,           // Fix
+        srcIssueQueuePtrRegA,    // Fix
+        srcIssueQueuePtrRegB,    // Fix
+`ifdef RSD_MARCH_FP_PIPE
+        srcIssueQueuePtrRegC,    // Fix
+`endif
+        prevDependIssueQueuePtr,  // Fix
+        flushNum                 // Fix
     );
 
     modport RenameStage(
@@ -166,10 +194,14 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         rst,
         commit,
         commitNum,
+        readData,         // Fix
+        recoveryEntryNum, // Fix
     output
         releaseReg,
         phyReleasedReg,
-        flushNum
+        flushNum,
+        popHeadNum, // Fix
+        popTailNum  // Fix
     );
 
     modport RetirementRMT(

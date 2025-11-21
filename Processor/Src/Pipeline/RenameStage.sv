@@ -235,7 +235,7 @@ module RenameStage(
         // Ideally: activeListEmpty[t] = (activeList.usage[t] == 0);
         // Fallback (Conservative): Use global empty for all.
         for(int t=0; t<NUM_THREADS; t++) begin
-            activeListEmpty[t] = (activeList.validEntryNum == 0); 
+            activeListEmpty[t] = (activeList.validEntryNum[t] == 0); 
             storeQueueEmpty[t] = loadStoreUnit.storeQueueEmpty;
         end
     end

@@ -1489,7 +1489,6 @@ module DCacheMissHandler(
                     else if (port.dcFlushing && (i == 0)) begin
                         // MSHR[0] is used to flush DCache.
                         nextMSHR[i].valid = TRUE;
-                        nextMSHR[i].tid = port.dcFlushTid;
                         nextMSHR[i].newAddr = '0;
                         nextMSHR[i].newValid = FALSE;
                         nextMSHR[i].victimValid = FALSE;

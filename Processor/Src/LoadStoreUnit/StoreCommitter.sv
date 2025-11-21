@@ -192,10 +192,11 @@ module StoreCommitter(
         end
 
         port.retiredStoreQueuePtr = retiredStoreQueuePtr;
-
-        nextUnfinishedStoreNum = unfinishedStoreNum;
-        if (port.commitStore) begin
-            nextUnfinishedStoreNum += port.commitStoreNum;
+ //    smt fix : iterate through threads to check for commit requests 
+       for (int t = 0; t < NUM_THREADS; t++) begin
+            if (port.commitStore[t]) begin
+                nextUnfinishedStoreNum += port.commitStoreNum[t];
+            end
         end
 
         isIO = 
@@ -364,9 +365,21 @@ module StoreCommitter(
     );
 
 
+// SMT FIX: Aggregate commit signals to check if ANY thread is committing
+    logic anyStoreCommit;
+    always_comb begin
+        anyStoreCommit = FALSE;
+        for (int t = 0; t < NUM_THREADS; t++) begin
+            // Check if thread 't' is committing at least one store
+            if (port.commitStore[t] && port.commitStoreNum[t] > 0) begin
+                anyStoreCommit = TRUE;
+            end
+        end
+    end
+
     `RSD_ASSERT_CLK(
         port.clk,
-        port.rst || !(phase == PHASE_RECOVER && port.commitStore && port.commitStoreNum > 0),
+        port.rst || !(phase == PHASE_RECOVER && anyStoreCommit),
         "Stores are committed in recovery phase." 
     );
 

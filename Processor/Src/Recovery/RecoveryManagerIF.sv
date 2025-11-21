@@ -204,7 +204,262 @@ interface RecoveryManagerIF( input logic clk, rst );
         selectedActiveListPtr
     );
     
-    // (Other modports updated similarly to expose arrays or remain generic if they handle filtering)
-    // Keeping list short for brevity, assume standard modports expose the arrays defined above.
+// fix to local missing modport error 
+
+    modport ScheduleStage(
+    input
+        toRecoveryPhase,
+        flushIQ_Entry
+    );
+
+    modport IntegerIssueStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport IntegerRegisterReadStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport IntegerExecutionStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport IntegerRegisterWriteStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+`ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
+    modport ComplexIntegerIssueStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport ComplexIntegerRegisterReadStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport ComplexIntegerExecutionStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport ComplexIntegerRegisterWriteStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+`endif
+
+    modport MemoryIssueStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport MemoryRegisterReadStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport MemoryExecutionStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport MemoryAccessStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport MemoryTagAccessStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport MemoryRegisterWriteStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+`ifdef RSD_MARCH_FP_PIPE
+    modport FPIssueStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport FPRegisterReadStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport FPExecutionStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport FPRegisterWriteStage(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+    
+    modport FPDivSqrtUnit(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+`endif
+
+    modport MulDivUnit(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport LoadQueue(
+    input
+        toRecoveryPhase,
+        loadQueueRecoveryTailPtr,
+    output 
+        loadQueueHeadPtr
+    );
+
+    modport StoreQueue(
+    input
+        toRecoveryPhase,
+        storeQueueRecoveryTailPtr,
+    output 
+        storeQueueHeadPtr
+    );
+
+    modport StoreCommitter(
+    input
+        toRecoveryPhase
+    );
+
+    modport ActiveList(
+    input
+        toRecoveryPhase,
+        toCommitPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns,
+    output
+        exceptionDetectedInRwStage, // These outputs might be needed if ActiveList drives recovery trigger
+        refetchTypeFromRwStage
+    );
+
+    modport ReplayQueue(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns,
+        recoveryFromRwStage,
+    output
+        replayQueueFlushedOpExist
+    );
+
+    modport Scheduler(
+    input
+        toRecoveryPhase,
+        flushIQ_Entry,
+    output
+        notIssued
+    );
+      
+    modport SelectLogic(
+    output 
+        selected,
+        selectedPtr
+    );
+    
+// Inside RecoveryManagerIF.sv
+
+    modport WakeupPipelineRegister(
+    input
+        toRecoveryPhase,      // Array [NUM_THREADS]
+        recoveryFromRwStage,  // Array [NUM_THREADS]
+        flushRangeHeadPtr,    // Array [NUM_THREADS] -- THIS WAS MISSING
+        flushRangeTailPtr,    // Array [NUM_THREADS] -- THIS WAS MISSING
+        flushAllInsns,        // Array [NUM_THREADS] -- THIS WAS MISSING
+        selectedActiveListPtr, // Array [ISSUE_WIDTH]
+        flushIQ_Entry,        // One-Hot Vector -- THIS WAS MISSING
+    output
+        wakeupPipelineRegFlushedOpExist
+    );
+
+    modport DCacheMissHandler(
+    input
+        toRecoveryPhase,
+        flushRangeHeadPtr,
+        flushRangeTailPtr,
+        flushAllInsns
+    );
+
+    modport InterruptController(
+    input
+        unableToStartRecovery
+    );
 
 endinterface : RecoveryManagerIF

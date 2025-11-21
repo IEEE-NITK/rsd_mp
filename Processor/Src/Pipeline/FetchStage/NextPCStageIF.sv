@@ -25,15 +25,18 @@ interface NextPCStageIF( input logic clk, rst, rstStart );
     BranchResult brResult[ INT_ISSUE_WIDTH ];
 
     // Interrupt
-    PC_Path interruptAddrIn;
-    logic interruptAddrWE;
+    // SMT FIX: These must be arrays because InterruptController drives them per thread.
+    PC_Path interruptAddrIn [NUM_THREADS];
+    logic interruptAddrWE [NUM_THREADS];
 
     // I-cache
     PhyAddrPath   icNextReadAddrIn; // Value of icReadAddrIn in next cycle.
 
     // Pipeline register
     FetchStageRegPath nextStage[ FETCH_WIDTH ];
-    ThreadID selectedTid;
+    
+    // SMT FIX: Renamed from selectedTid to fetchThreadID to match BTB/Gshare expectations
+    ThreadID fetchThreadID;
 
     modport PC(
     input
@@ -54,7 +57,7 @@ interface NextPCStageIF( input logic clk, rst, rstStart );
         pcWE,
         pcIn,
         predNextPC,
-        selectedTid,
+        fetchThreadID, // Updated name
         icNextReadAddrIn,
         nextStage
     );
@@ -76,7 +79,8 @@ interface NextPCStageIF( input logic clk, rst, rstStart );
         rst,
         rstStart,
         predNextPC,
-        brResult
+        brResult,
+        fetchThreadID // Added so BTB knows which thread is fetching
     );
 
     modport BranchPredictor(
@@ -85,7 +89,8 @@ interface NextPCStageIF( input logic clk, rst, rstStart );
         rst,
         rstStart,
         predNextPC,
-        brResult
+        brResult,
+        fetchThreadID // Added so Predictor knows which history to use
     );
 
     modport ICache(

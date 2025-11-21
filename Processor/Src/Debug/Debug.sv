@@ -17,7 +17,7 @@ import DebugTypes::*;
 
 module Debug (
     DebugIF.Debug port,
-    output PC_Path lastCommittedPC
+    output PC_Path lastCommittedPC[NUM_THREADS]
 );
 
 `ifndef RSD_DISABLE_DEBUG_REGISTER

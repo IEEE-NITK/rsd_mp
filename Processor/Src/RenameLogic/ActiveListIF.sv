@@ -121,15 +121,17 @@ interface ActiveListIF( input logic clk, rst );
 
     modport RenameLogic(
     input
-        readData,
-        popTailNum, // Array
+        readData, // Array
         allocatable, // Array
         validEntryNum, // Array
         pushedTailPtr,
+        recoveryEntryNum,
     output
         pushTid,
         pushTail,
-        pushedTailData
+        pushedTailData,
+        popHeadNum,
+        popTailNum
     );
 
     modport RenameLogicCommitter(
@@ -151,7 +153,52 @@ interface ActiveListIF( input logic clk, rst );
         validEntryNum
     );
 
-    // Other modports remain similar but aware of the array nature of pop signals
-    // (Omitted for brevity, assumed compatible)
+    // fix to local missing modport error
+    modport RenameStage(
+    input
+        allocatable,
+        pushedTailPtr,
+        validEntryNum,
+    output
+        pushTail,
+        pushedTailData
+    );
+
+    modport IntegerRegisterWriteStage(
+    output
+        intWrite,
+        intWriteData
+    );
+
+`ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
+    modport ComplexIntegerRegisterWriteStage(
+    output
+        complexWrite,
+        complexWriteData
+    );
+`endif
+
+    modport MemoryRegisterWriteStage(
+    output
+        memWrite,
+        memWriteData
+    );
+
+`ifdef RSD_MARCH_FP_PIPE
+    modport FPRegisterWriteStage(
+    output
+        fpWrite,
+        fpWriteData,
+        fpFFlagsData
+    );
+`endif
+
+    modport RecoveryManager(
+    output
+        exceptionOpPtr,
+        detectedFlushRangeTailPtr,
+        loadQueueRecoveryTailPtr,
+        storeQueueRecoveryTailPtr
+    );
 
 endinterface : ActiveListIF

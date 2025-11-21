@@ -217,7 +217,7 @@ logic clk;
     //
     // --- LED IO
     //
-    PC_Path lastCommittedPC;
+    PC_Path lastCommittedPC[NUM_THREADS];
 
 `ifdef RSD_SYNTHESIS_ZEDBOARD
     logic [25:0] ledBlinkCounter; // just for LED
@@ -235,7 +235,7 @@ logic clk;
         ledOut[0] <= ~programLoaded; // MEMORY IMAGE transfer is done
     end
 `else
-    assign ledOut = lastCommittedPC[ LED_WIDTH-1:0 ];
+    assign ledOut = lastCommittedPC[0][ LED_WIDTH-1:0 ];
 `endif
 
     //
@@ -255,11 +255,15 @@ logic clk;
                             memAccessWE_FromProgramLoader,
                             programLoaded);
 `endif
-    logic reqExternalInterrupt;
-    ExternalInterruptCodePath externalInterruptCode; 
-    always_comb begin
-        reqExternalInterrupt = FALSE;
-        externalInterruptCode = 0;
+    logic reqExternalInterrupt[NUM_THREADS];
+    ExternalInterruptCodePath externalInterruptCode[NUM_THREADS]; 
+
+always_comb begin
+        // Initialize all threads to 0 (No Interrupts)
+        for (int i = 0; i < NUM_THREADS; i++) begin
+            reqExternalInterrupt[i] = FALSE;
+            externalInterruptCode[i] = 0;
+        end
     end
 
     //

@@ -10,8 +10,8 @@ localparam TRUE  = 1'b1;
 localparam FALSE = 1'b0;
 
 // Thread ID for SMT support
-localparam THREAD_NUM = CONF_THREAD_NUM;
-localparam THREAD_NUM_BIT_WIDTH = (THREAD_NUM > 1) ? $clog2(THREAD_NUM) : 1;
+localparam NUM_THREADS = CONF_THREAD_NUM;
+localparam THREAD_NUM_BIT_WIDTH = (NUM_THREADS > 1) ? $clog2(NUM_THREADS) : 1;
 typedef logic [THREAD_NUM_BIT_WIDTH-1:0] ThreadID;
 
 // SID

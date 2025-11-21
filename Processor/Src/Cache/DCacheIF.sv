@@ -123,7 +123,7 @@ input
     logic dcFlushReqAck;
     logic dcFlushComplete;
     logic dcFlushReq;
-    ThreadID dcFlushTid;
+   // ThreadID dcFlushTid;
     logic flushComplete;
     logic mshrFlushComplete;
 
@@ -243,7 +243,7 @@ input
         storedLineData,
         storedLineByteWE,
         dcFlushing,
-        dcFlushTid,
+        //dcFlushTid,
     output
         mshrCacheReq,
         mshrCacheMuxIn,
@@ -305,7 +305,7 @@ input
         mshrPhase,
         dcFlushReqAck,
         dcFlushComplete,
-        dcFlushTid,
+       // dcFlushTid,
     output
         lsuCacheReq,
         lsuMuxIn,
@@ -323,7 +323,7 @@ input
         storedLineData,
         storedLineByteWE,
         dcFlushReq,
-        dcFlushTid,
+        // dcFlushTid,
         flushComplete,
         lsuCacheGrtReg
     );

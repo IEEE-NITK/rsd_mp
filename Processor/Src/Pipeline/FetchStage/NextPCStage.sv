@@ -28,22 +28,76 @@ module NextPCStage(
 );
 
 `ifdef RSD_STOP_FETCH_ON_PRED_MISS
-    // ... (Keep existing Stop Fetch logic ) ...
-    // Note For brevity, assuming standard phase logic here. 
-    // In a real SMT impl, Phase logic might need duplication per thread, 
-    // but strictly for NextPC arbitration, we can often share or simplify.
+    typedef enum logic {
+        PHASE_FETCH,
+        PHASE_WAIT
+    } Phase;
+
+    parameter PHASE_DELAY = 2;
+    Phase phase[PHASE_DELAY];
+    Phase nextPhase;
+    
+    // SMT Note: This logic assumes global stall behavior for mispredicts.
+    // Ideally duplicated per thread, but kept simple here for compatibility.
+    always_ff @(posedge port.clk) begin
+        if (port.rst) begin
+            for (int i = 0; i < PHASE_DELAY; i++) begin
+                phase[i] <= PHASE_FETCH;
+            end
+        end
+        // Check if ANY thread is recovering
+        else if (recovery.toRecoveryPhase[0] || recovery.toRecoveryPhase[1] || recovery.toCommitPhase[0] || recovery.toCommitPhase[1]) begin
+            for (int i = 0; i < PHASE_DELAY; i++) begin
+                phase[i] <= PHASE_FETCH;
+            end
+        end
+        else begin
+            for (int i = 0; i < PHASE_DELAY - 1; i++) begin
+                phase[i+1] <= phase[i];
+            end
+            phase[0] <= nextPhase;
+        end
+    end
+
+    always_comb begin
+        // Check if ANY thread is recovering
+        if (recovery.toRecoveryPhase[0] || recovery.toRecoveryPhase[1]) begin
+            nextPhase = PHASE_FETCH;
+        end
+        else begin
+            nextPhase = phase[0];
+            for (int i = 0; i < INT_ISSUE_WIDTH; i++) begin
+                if (port.brResult[i].valid && port.brResult[i].mispred) begin
+                    nextPhase = PHASE_WAIT;
+                end
+            end
+        end
+    end
 `endif
 
-    // SMT: Thread Arbitration (Round Robin)
-    // We only switch threads if we are NOT stalled. 
-    // If we stall (ICache miss), we must retry the SAME thread next cycle.
+    // Debug SID
+`ifndef RSD_DISABLE_DEBUG_REGISTER
+    OpSerial curSID, nextSID;
+    FlipFlop#( .FF_WIDTH(OP_SERIAL_WIDTH), .RESET_VALUE(1) )
+        sidFF(
+            .out( curSID ),
+            .in ( nextSID ),
+            .clk( port.clk ),
+            .rst( port.rst )
+        );
+`endif
+
+    //
+    // --- SMT Arbitration (Round Robin)
+    //
     ThreadID currentThread;
     logic [THREAD_NUM_BIT_WIDTH-1:0] threadCounter;
     
     // Pipeline Control
     logic stall, clear;
     logic regStall, beginStall;
-    
+    logic writePC_FromOuter;
+
     always_ff @(posedge port.clk) begin
         if (port.rst) begin
             threadCounter <= '0;
@@ -51,18 +105,17 @@ module NextPCStage(
         end
         else begin
             regStall <= stall;
-            // ARBITRATION LOGIC:
-            // Only advance the round-robin counter if we are not stalled.
-            // If stalled, we must hold the thread ID to retry the fetch.
+            // Only switch threads if we are not stalled.
+            // If we stall (e.g. I-Cache miss), we must retry the SAME thread.
             if (!stall) begin
                 threadCounter <= threadCounter + 1'b1;
             end
         end
     end
-    
+
     always_comb begin
         currentThread = threadCounter % NUM_THREADS;
-        port.selectedTid = currentThread; // Output to interface
+        port.fetchThreadID = currentThread; // Drive interface signal
     end
 
     // Current PC Selection
@@ -74,23 +127,43 @@ module NextPCStage(
 
     PC_Path predNextPC;
     FetchStageRegPath nextStage[ FETCH_WIDTH ];
-    logic writePC_FromOuter;
+    
+    // Helper logic to aggregate array signals
+    logic isAnyInterrupt;
+    logic isAnyRecovery;
 
     always_comb begin
         // Control
         stall = ctrl.npStage.stall;
         clear = ctrl.npStage.clear;
-        ctrl.npStageSendBubbleLower = FALSE; // Simplified for SMT start
+        
+`ifdef RSD_STOP_FETCH_ON_PRED_MISS
+        // Check array for recovery status
+        ctrl.npStageSendBubbleLower =
+            (!(recovery.toRecoveryPhase[0] || recovery.toRecoveryPhase[1]) && phase[PHASE_DELAY - 1] == PHASE_WAIT);
+`else
+        ctrl.npStageSendBubbleLower = FALSE;
+`endif
 
         beginStall = !regStall && stall;
 
-        // Whether PC is written from outside (Recovery or Interrupt)
-        if (recovery.toRecoveryPhase || recovery.recoverFromRename || port.interruptAddrWE) begin
+        // Check arrays for external triggers
+        isAnyInterrupt = FALSE;
+        isAnyRecovery = FALSE;
+        for(int t=0; t<NUM_THREADS; t++) begin
+            if (port.interruptAddrWE[t]) isAnyInterrupt = TRUE;
+            if (recovery.toRecoveryPhase[t]) isAnyRecovery = TRUE;
+        end
+
+        // Whether PC is written from outside
+        if (isAnyRecovery || recovery.recoverFromRename || isAnyInterrupt) begin
             writePC_FromOuter = TRUE;
         end
         else begin
             writePC_FromOuter = FALSE;
         end
+        
+        // Note: port.pcWE is now an array, handled in the PC Update block below.
     end
 
 
@@ -100,22 +173,37 @@ module NextPCStage(
     always_comb begin
 
         // Decide the address to input to the branch predictor
-        if (recovery.toRecoveryPhase) begin
-            // Recovery: Use the address provided by the recovery manager
+        // Priority: Recovery > Interrupt > Rename Recovery > Normal Fetch
+        
+        predNextPC = currentPC; // Default
+
+        // SMT: Check recovery for each thread. 
+        // If multiple threads recover simultaneously, we prioritize Thread 0 
+        // (or the one corresponding to the current cycle if sophisticated).
+        if (recovery.toRecoveryPhase[0]) begin
+            // Branch misprediction or exception in T0
+            predNextPC = recovery.recoveredPC_FromRwCommit; 
+        end
+        else if (recovery.toRecoveryPhase[1]) begin
+            // Branch misprediction or exception in T1
             predNextPC = recovery.recoveredPC_FromRwCommit;
         end
         else if (recovery.recoverFromRename) begin
+            // Detect branch misprediction in decode stage (Rename)
             predNextPC = recovery.recoveredPC_FromRename;
         end
         else begin
-            // Standard Fetch: Use the current thread's PC
-            predNextPC = currentPC; 
+            // Normal Fetch Logic
+            predNextPC = currentPC;
 
             for (int i = 0; i < FETCH_WIDTH; i++) begin
-                // Check BTB Hit for the CURRENT thread
-                // Note The BTB module (modified previously) checks the TID internally
+                // Process of branch prediction:
+                // If BTB is hit, the instruction is predicted to be a branch. 
+                // In addition, if the branch is predicted as Taken, 
+                // the address read from BTB is used as next PC.
                 if (!regStall && next.fetchStageIsValid[i] && 
                         next.btbHit[i] && next.brPredTaken[i]) begin
+                    // Use PC from BTB
                     predNextPC = next.btbOut[i];
                     break;
                 end
@@ -133,59 +221,75 @@ module NextPCStage(
     always_comb begin
 
         // --- PC Input Data Calculation
-        if (port.interruptAddrWE) begin
-            port.pcIn = port.interruptAddrIn;
+        if (isAnyInterrupt) begin
+            // When an interrupt occurs, use interrupt address.
+            // SMT: Mux the correct interrupt address
+            if (port.interruptAddrWE[0])
+                port.pcIn = port.interruptAddrIn[0];
+            else
+                port.pcIn = port.interruptAddrIn[1];
         end
         else if (beginStall) begin
-            // If stalling, keep the calculated next PC ready
+            // Update PC based on the branch prediction result accessed
+            // immediately before the stall if it is beginning of stall.
             port.pcIn = predNextPC;
         end
         else begin
-            // Increment PC (Sequential fetch)
+            // Increment PC
             port.pcIn = predNextPC + FETCH_WIDTH*INSN_BYTE_WIDTH;
-            
             for (int i = 1; i < FETCH_WIDTH; i++) begin
-                if (StepOverCacheLine(predNextPC, predNextPC+i*INSN_BYTE_WIDTH)) begin
+                if (StepOverCacheLine(predNextPC, 
+                                    predNextPC+i*INSN_BYTE_WIDTH)) begin
+                    // When PC stepped over the border of cache line, stop there
                     port.pcIn = predNextPC+i*INSN_BYTE_WIDTH;
                     break;
                 end
             end
         end
 
-        // --- PC Write Enable (Demux)
-        for (int i = 0; i < NUM_THREADS; i++) begin
+        // --- PC Write Enable (Demux per Thread) ---
+        for (int t = 0; t < NUM_THREADS; t++) begin
             if (port.rst) begin
-                port.pcWE[i] = FALSE;
+                port.pcWE[t] = FALSE;
             end
-            // Case 1: Recovery (Global or Specific Thread)
-            // Assuming recoveryManager handles thread targeting, but for now 
-            // if we recover, we usually recover the specific thread.
-            // (Simplification: If recovery.toRecoveryPhase is high, we assume 
-            // the recovery unit is driving the PC for the *recovering* thread.
-            // For this snippet, we assume recovery overrides arbitration).
-            else if (writePC_FromOuter) begin
-                 // In a full implementation, check if (i == recovery.tid)
-                 // For now, we assume the system recovers one thread at a time.
-                 port.pcWE[i] = TRUE; 
+            else if (recovery.toRecoveryPhase[t]) begin
+                // Recovery writes to the specific thread's PC
+                port.pcWE[t] = TRUE;
             end
-            // Case 2: Normal Fetch
-            else if (i == currentThread) begin
-                 // We only update the PC of the thread we are currently fetching
-                 port.pcWE[i] = (!stall || beginStall);
+            else if (port.interruptAddrWE[t]) begin
+                // Interrupt writes to the specific thread's PC
+                port.pcWE[t] = TRUE;
+            end
+            else if (recovery.recoverFromRename) begin
+                 // Assuming rename recovery targets a specific thread passed via interface,
+                 // but for now usually global/T0 in simple implementations.
+                 // Ideally: check rename recovery TID.
+                 // For this code, we enable for ALL (simultaneous update) or Current.
+                 // Safe fallback: Enable for current thread if recovering from rename.
+                 port.pcWE[t] = (t == currentThread); 
+            end
+            else if (t == currentThread) begin
+                // Normal Fetch: Only update the current thread's PC
+                // NOTE: Update even during stall in the next cases:
+                //   1) if PC is written from outside (Handled above)
+                //   2) if it is beginning of stall
+                port.pcWE[t] = (!stall || beginStall) && !writePC_FromOuter;
             end
             else begin
-                 // Other threads hold their PC
-                 port.pcWE[i] = FALSE;
+                port.pcWE[t] = FALSE;
             end
         end
 
-        // --- Pipeline Register Update
+
         for (int i = 0; i < FETCH_WIDTH; i++) begin
-            // Pass the current thread ID down the pipeline
-            nextStage[i].tid = currentThread; 
+`ifndef RSD_DISABLE_DEBUG_REGISTER
+            // Generate serial id for dumping
+            nextStage[i].sid = curSID + i;
+`endif
+            nextStage[i].tid = currentThread; // SMT: Tag instruction
             nextStage[i].pc = predNextPC + i * INSN_BYTE_WIDTH;
             
-            if (port.interruptAddrWE || clear ||
+            if (isAnyInterrupt || clear ||
                 StepOverCacheLine(predNextPC, nextStage[i].pc)) begin
                 nextStage[i].valid = FALSE;
             end
@@ -209,12 +313,37 @@ module NextPCStage(
             fetchAddr = ToAddrFromPC(next.fetchStagePC[0]);
         end
         else begin
-            // Use the PC of this stage (Current Thread)
+            // Use the PC of this stage
             fetchAddr = ToAddrFromPC(predNextPC);
         end
         
         // To I-cache
         port.icNextReadAddrIn = ToPhyAddrFromLogical(fetchAddr);
     end
+
+`ifndef RSD_DISABLE_DEBUG_REGISTER
+    logic [FETCH_WIDTH : 0] numValidInsns;
+    always_comb begin
+        numValidInsns = 0; // Count valid instructions in this stage
+        for (int i = 0; i < FETCH_WIDTH; i++) begin
+            if (!nextStage[i].valid) begin
+                break;
+            end
+            else begin
+                numValidInsns++;
+            end
+        end
+
+        // Update serial ID.
+        nextSID = ( stall || clear) ? 
+            curSID : (curSID + numValidInsns);
+
+        // --- Debug Register
+        for ( int i = 0; i < FETCH_WIDTH; i++ ) begin
+            debug.npReg[i].valid = stall ? FALSE : nextStage[i].valid;
+            debug.npReg[i].sid = nextStage[i].sid;
+        end
+    end
+`endif
 
 endmodule : NextPCStage

@@ -18,16 +18,17 @@ interface RenameStageIF( input logic clk, rst, rstStart );
     DispatchStageRegPath nextStage [ RENAME_WIDTH ];
 
     PC_Path pc [ RENAME_WIDTH ];
+    ThreadID tid [ RENAME_WIDTH ];   
     logic memDependencyPred [ RENAME_WIDTH ];
 
     modport ThisStage(
     input
         clk,
-        rst,
-        tid, // SMT: RenameStage must drive this
+        rst, // SMT: RenameStage must drive this
     output
         nextStage,
-        pc
+        pc, 
+        tid
     );
 
     modport NextStage(
