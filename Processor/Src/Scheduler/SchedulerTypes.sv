@@ -20,12 +20,13 @@ import LoadStoreUnitTypes::*;
 import FetchUnitTypes::*;
 import ActiveListIndexTypes::*;
 
-// ... [Keeping existing parameters unchanged] ...
+// Issue queue
 localparam ISSUE_QUEUE_ENTRY_NUM = CONF_ISSUE_QUEUE_ENTRY_NUM;
 localparam ISSUE_QUEUE_ENTRY_NUM_BIT_WIDTH = $clog2(ISSUE_QUEUE_ENTRY_NUM);
 
 typedef logic [ISSUE_QUEUE_ENTRY_NUM_BIT_WIDTH-1:0] IssueQueueIndexPath;
 typedef logic [ISSUE_QUEUE_ENTRY_NUM_BIT_WIDTH:0] IssueQueueCountPath;
+
 typedef logic [ISSUE_QUEUE_ENTRY_NUM-1:0] IssueQueueOneHotPath;
 
 localparam ISSUE_QUEUE_SRC_REG_NUM = MICRO_OP_SOURCE_REG_NUM;
@@ -37,19 +38,19 @@ localparam ISSUE_QUEUE_FP_LATENCY      = FP_EXEC_STAGE_DEPTH + 2;
 
 localparam WAKEUP_WIDTH = INT_ISSUE_WIDTH + COMPLEX_ISSUE_WIDTH + LOAD_ISSUE_WIDTH + FP_ISSUE_WIDTH;    // Stores do not wakeup consumers.
 
+// --- Issue queue flush count
 localparam ISSUE_QUEUE_RETURN_INDEX_WIDTH = 2;
 localparam ISSUE_QUEUE_RETURN_INDEX_CYCLE
     = (ISSUE_QUEUE_ENTRY_NUM-1) / ISSUE_QUEUE_RETURN_INDEX_WIDTH + 1; 
 localparam ISSUE_QUEUE_RETURN_INDEX_CYCLE_BIT_SIZE
     = $clog2( ISSUE_QUEUE_RETURN_INDEX_CYCLE );
 
+// --- Issue queue reset count
 localparam ISSUE_QUEUE_RESET_CYCLE
     = (ISSUE_QUEUE_ENTRY_NUM-1) / (ISSUE_WIDTH+ISSUE_QUEUE_RETURN_INDEX_WIDTH) + 1; 
 localparam ISSUE_QUEUE_RESET_CYCLE_BIT_SIZE
     = $clog2( ISSUE_QUEUE_RESET_CYCLE );
 
-
-// ... [Keeping Enums/Structs unchanged until IntIssueQueueEntry] ...
 
 // Information about the execution of an op.
 typedef enum logic [3:0] // ExecutionState
@@ -77,8 +78,64 @@ typedef enum logic [3:0] // ExecutionState
 } ExecutionState;
 localparam EXEC_STATE_BIT_WIDTH = $bits(ExecutionState);
 
-// ... [ActiveListEntry is defined in RenameLogicTypes.sv, removed from here if duplicate] ...
-// Assuming ActiveListEntry definition is NOT here, skipping.
+// SMT: ActiveListEntry DEFINED HERE (Preserving Original Structure + Adding TID)
+typedef struct packed // ActiveListEntry
+{
+    `ifndef RSD_DISABLE_DEBUG_REGISTER // Debug info
+        OpId      opId;
+    `endif
+
+    PC_Path pc;
+    
+    // SMT CHANGE: Added TID here so Active List knows ownership
+    ThreadID tid;
+
+    LRegNumPath logDstRegNum;
+    logic writeReg;
+    
+    logic isLoad;
+    logic isStore;
+    logic isBranch; // TRUE if the op is BR or RIJ
+    logic isEnv;    // TRUE if the op is ECALL/EBREAK
+    
+    logic last;         // TRUE if this micro-op is the last micro-op in an instruction
+    logic undefined;
+    
+    // For releasing a register to a free list on recovery.
+    PRegNumPath  phyDstRegNum;
+
+    // For releasing a register to a free list on commitment.
+    // and recovering a RMT.
+    PRegNumPath  phyPrevDstRegNum;
+
+    IssueQueueIndexPath prevDependIssueQueuePtr;
+    
+} ActiveListEntry;
+
+typedef struct packed // ActiveListWriteData
+{
+    ActiveListIndexPath ptr;
+    LoadQueueIndexPath loadQueuePtr;
+    StoreQueueIndexPath storeQueuePtr;
+    ExecutionState      state;
+    ThreadID            tid; // SMT: Ensure TID is passed during writeback
+    PC_Path             pc;
+    AddrPath            dataAddr;
+    logic               isBranch;
+    logic               isStore;
+} ActiveListWriteData;
+
+// Convert a pointer of an active list to an "age."
+// An "age" can be directly compared with a comparator.
+function automatic ActiveListCountPath ActiveListPtrToAge(ActiveListIndexPath ptr, ActiveListIndexPath head);
+    ActiveListCountPath age;
+    age = ptr;
+    if (ptr < head)
+        return age + ACTIVE_LIST_ENTRY_NUM; // Wrap around.
+    else
+        return age;
+endfunction
+
 
 //
 // --- OpInfo of Integer Pipeline

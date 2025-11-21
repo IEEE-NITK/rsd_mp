@@ -224,7 +224,7 @@ module DispatchStage(
 `ifdef RSD_MARCH_FP_PIPE
             //
             // --- To a FP queue.
-            //
+            //              
             fpEntry[i].fpOpInfo.opType = opInfo[i].mopSubType.fpType;
             fpEntry[i].fpOpInfo.fpuCode = opInfo[i].operand.fpOp.fpuCode;
             fpEntry[i].fpOpInfo.rm = opInfo[i].operand.fpOp.rm;
