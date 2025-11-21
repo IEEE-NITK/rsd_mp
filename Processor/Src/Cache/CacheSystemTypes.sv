@@ -174,7 +174,7 @@ package CacheSystemTypes;
 
         // For flush
         DCacheIndexPath flushIndex;
-
+        ThreadID tid;
         // AL Ptr info to release MSHR entry when allocator load is flushed
          ActiveListIndexPath activeListPtr;
     } MissStatusHandlingRegister;
@@ -320,6 +320,7 @@ package CacheSystemTypes;
 
     typedef struct packed {
         logic valid;
+
         PhyAddrPath addr;
     } MemReadAccessReq;
 
@@ -333,5 +334,6 @@ package CacheSystemTypes;
         logic valid;
         MemWriteSerial serial;
     } MemAccessResponse;
+
 
 endpackage
