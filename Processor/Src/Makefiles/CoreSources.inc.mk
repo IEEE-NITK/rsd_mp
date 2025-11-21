@@ -31,8 +31,8 @@ TYPES = \
 	FetchUnit/FetchUnitTypes.sv \
 	FloatingPointUnit/FPUTypes.sv \
 	LoadStoreUnit/LoadStoreUnitTypes.sv \
-	Scheduler/SchedulerTypes.sv \
 	RenameLogic/RenameLogicTypes.sv \
+	Scheduler/SchedulerTypes.sv \
 	Pipeline/PipelineTypes.sv \
 	IO/IO_UnitTypes.sv \
 	Privileged/CSR_UnitTypes.sv \
