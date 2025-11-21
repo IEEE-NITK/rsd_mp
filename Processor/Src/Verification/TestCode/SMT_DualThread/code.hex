@@ -1,0 +1,140 @@
+// SMT Dual-Thread Test Code
+// This hex file contains simple instructions for testing round-robin fetch
+// 
+// Memory layout:
+// 0x00000000 - 0x000003FF: ROM (1KB) - Thread 0 code
+// 0x80000000 - 0x800003FF: RAM - Thread 1 code / shared data
+//
+// Thread 0 starts at 0x00000000
+// Thread 1 starts at 0x80000000
+//
+// Simple test program:
+// 1. Load immediate into register
+// 2. Add operation
+// 3. Store result
+// 4. Loop back
+//
+
+// Thread 0 Code (ROM: 0x00000000 - 0x000001FF)
+// Add immediate: addi x1, x0, 10     (x1 = 10)
+// RISC-V encoding: 0x00A00093
+00A00093
+
+// Add: add x2, x1, x1               (x2 = 20)
+// RISC-V encoding: 0x00108133
+00108133
+
+// Add immediate: addi x3, x2, 5      (x3 = 25)
+// RISC-V encoding: 0x00510193
+00510193
+
+// Store word: sw x3, 0(x0)          (store x3 at address 0)
+// RISC-V encoding: 0x00302023
+00302023
+
+// Loop instruction: jal x0, -12     (jump back)
+// RISC-V encoding: 0xFF9FF06F
+FF9FF06F
+
+// Padding
+00000000
+00000000
+00000000
+
+// Thread 0 Code continues (0x00000020 - 0x000001FF)
+// More instructions for verification
+// Load immediate: addi x4, x0, 100  (x4 = 100)
+00640413
+
+// Add: add x5, x4, x4               (x5 = 200)
+00420533
+
+// Add immediate: addi x6, x5, 50    (x6 = 250)
+03228613
+
+// Store word: sw x6, 4(x0)
+00302223
+
+// Loop back
+FFFFFFEF
+
+// Padding to reach next thread's code
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+
+// Thread 1 Code (RAM: 0x80000000 - 0x800001FF)
+// Offset 0x80000000 in linear address space
+// Add immediate: addi x10, x0, 42    (x10 = 42)
+02A00593
+
+// Add: add x11, x10, x10             (x11 = 84)
+00558633
+
+// Add immediate: addi x12, x11, 8    (x12 = 92)
+00830683
+
+// Store word: sw x12, 8(x0)
+00302423
+
+// Loop back
+FF9FF06F
+
+// Padding
+00000000
+00000000
+00000000
+
+// Thread 1 Code continues (0x80000020 - 0x800001FF)
+// More test instructions
+// Add immediate: addi x13, x0, 200   (x13 = 200)
+0C800693
+
+// Add: add x14, x13, x13             (x14 = 400)
+00D70733
+
+// Add immediate: addi x15, x14, 100  (x15 = 500)
+06438793
+
+// Store word: sw x15, 12(x0)
+00302623
+
+// Loop back
+FFFFFFEF
+
+// Padding to fill test section
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+00000000
+
+// Shared Data Section (0x80000100 - 0x800001FF)
+// Can be used for synchronization between threads
+// Initial values
+00000001
+00000002
+00000003
+00000004
+00000005
+00000006
+00000007
+00000008
+00000000
+00000000
