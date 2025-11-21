@@ -1,23 +1,23 @@
-# Makefile to run TestSMT_DualThreadRoundRobin using Verilator
+# Makefile to run TestSMT_RoundRobinPrefetch using Verilator
 #
 # Usage:
-#   make -f Makefile.TestSMT_DualThread.mk          # Build and run with defaults
-#   make -f Makefile.TestSMT_DualThread.mk build    # Build only
-#   make -f Makefile.TestSMT_DualThread.mk run      # Run existing build
-#   make -f Makefile.TestSMT_DualThread.mk clean    # Clean build artifacts
-#   make -f Makefile.TestSMT_DualThread.mk help     # Show options
+#   make -f Makefile.TestSMT_RoundRobinPrefetch.mk          # Build and run with defaults
+#   make -f Makefile.TestSMT_RoundRobinPrefetch.mk build    # Build only
+#   make -f Makefile.TestSMT_RoundRobinPrefetch.mk run      # Run existing build
+#   make -f Makefile.TestSMT_RoundRobinPrefetch.mk clean    # Clean build artifacts
+#   make -f Makefile.TestSMT_RoundRobinPrefetch.mk help     # Show options
 #
 # Parameters (override on command line):
-#   MAX_TEST_CYCLES=<num>         Max simulation cycles (default: 1000)
+#   MAX_TEST_CYCLES=<num>         Max simulation cycles (default: 2000)
 #   TEST_CODE=<path>              Test code directory (default: Verification/TestCode/SMT_DualThread)
 #   DUMMY_DATA_FILE=<path>        Dummy data file (default: Verification/DummyData.hex)
-#   SHOW_SERIAL_OUT=<0|1>         Show serial output (default: 0)
+#   SHOW_PREFETCH_DEBUG=<0|1>     Show prefetch debug output (default: 0)
 
 # Simulation parameters
-MAX_TEST_CYCLES ?= 1000
+MAX_TEST_CYCLES ?= 2000
 TEST_CODE ?= Verification/TestCode/SMT_DualThread
 DUMMY_DATA_FILE ?= Verification/DummyData.hex
-SHOW_SERIAL_OUT ?= 0
+SHOW_PREFETCH_DEBUG ?= 0
 
 # Verilator configuration
 ifndef RSD_VERILATOR_BIN
@@ -30,8 +30,8 @@ endif
 SOURCE_ROOT  = ./
 TOOLS_ROOT   = ../Tools/
 PROJECT_WORK = ../Project/Verilator
-LIBRARY_WORK_RTL = $(PROJECT_WORK)/obj_dir_smt_dual
-VERILATED_TOP_MODULE_NAME = VTestSMT_DualThreadRoundRobin
+LIBRARY_WORK_RTL = $(PROJECT_WORK)/obj_dir_smt_rrprefetch
+VERILATED_TOP_MODULE_NAME = VTestSMT_RoundRobinPrefetch
 
 # Include core source code definition
 include Makefiles/CoreSources.inc.mk
@@ -60,7 +60,7 @@ VERILATOR_OPTION = \
 	--binary \
 	--assert \
 	-sv \
-	--top-module TestSMT_DualThreadRoundRobin \
+	--top-module TestSMT_RoundRobinPrefetch \
 	$(VERILATOR_DISABLED_WARNING) \
 	$(RSD_VERILATOR_DEFINITION) \
 	--Mdir $(LIBRARY_WORK_RTL) \
@@ -83,7 +83,7 @@ VERILATOR_TARGET_CXXFLAGS = \
 all: build run
 
 build: $(LIBRARY_WORK_RTL) $(DEPS_RTL) Makefiles/CoreSources.inc.mk
-	@echo "=== Building TestSMT_DualThreadRoundRobin ==="
+	@echo "=== Building TestSMT_RoundRobinPrefetch ==="
 	$(VERILATOR_BIN) $(VERILATOR_OPTION) $(DEPS_RTL)
 	cd $(LIBRARY_WORK_RTL); \
 		VPATH=../../../Src \
@@ -92,18 +92,18 @@ build: $(LIBRARY_WORK_RTL) $(DEPS_RTL) Makefiles/CoreSources.inc.mk
 	@echo "=== Build Successful ==="
 
 run:
-	@echo "=== Running TestSMT_DualThreadRoundRobin ==="
+	@echo "=== Running TestSMT_RoundRobinPrefetch ==="
 	@echo "Parameters:"
 	@echo "  MAX_TEST_CYCLES: $(MAX_TEST_CYCLES)"
 	@echo "  TEST_CODE: $(TEST_CODE)"
 	@echo "  DUMMY_DATA_FILE: $(DUMMY_DATA_FILE)"
-	@echo "  SHOW_SERIAL_OUT: $(SHOW_SERIAL_OUT)"
+	@echo "  SHOW_PREFETCH_DEBUG: $(SHOW_PREFETCH_DEBUG)"
 	@echo ""
 	$(LIBRARY_WORK_RTL)/$(VERILATED_TOP_MODULE_NAME) \
 		+MAX_TEST_CYCLES=$(MAX_TEST_CYCLES) \
 		+TEST_CODE=$(TEST_CODE) \
 		+DUMMY_DATA_FILE=$(DUMMY_DATA_FILE) \
-		+SHOW_SERIAL_OUT=$(SHOW_SERIAL_OUT)
+		+SHOW_PREFETCH_DEBUG=$(SHOW_PREFETCH_DEBUG)
 
 $(LIBRARY_WORK_RTL):
 	mkdir -p $(PROJECT_WORK)
@@ -114,25 +114,38 @@ clean:
 	@echo "=== Clean Complete ==="
 
 help:
-	@echo "TestSMT_DualThreadRoundRobin Makefile"
-	@echo "======================================"
+	@echo "TestSMT_RoundRobinPrefetch Makefile"
+	@echo "===================================="
+	@echo ""
+	@echo "Round-Robin Prefetch Test for SMT Dual-Thread Architecture"
+	@echo ""
+	@echo "This testbench verifies:"
+	@echo "  - Round-robin thread selection in fetch stage"
+	@echo "  - Per-thread instruction prefetching"
+	@echo "  - ROM/RAM initialization and access"
+	@echo "  - PC progression for each thread"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make -f Makefile.TestSMT_DualThread.mk          Build and run"
-	@echo "  make -f Makefile.TestSMT_DualThread.mk build    Build only"
-	@echo "  make -f Makefile.TestSMT_DualThread.mk run      Run existing build"
-	@echo "  make -f Makefile.TestSMT_DualThread.mk clean    Clean build artifacts"
-	@echo "  make -f Makefile.TestSMT_DualThread.mk help     Show this help"
+	@echo "  make -f Makefile.TestSMT_RoundRobinPrefetch.mk          Build and run"
+	@echo "  make -f Makefile.TestSMT_RoundRobinPrefetch.mk build    Build only"
+	@echo "  make -f Makefile.TestSMT_RoundRobinPrefetch.mk run      Run existing build"
+	@echo "  make -f Makefile.TestSMT_RoundRobinPrefetch.mk clean    Clean build artifacts"
+	@echo "  make -f Makefile.TestSMT_RoundRobinPrefetch.mk help     Show this help"
 	@echo ""
 	@echo "Parameters (override on command line):"
-	@echo "  MAX_TEST_CYCLES=<num>         Max simulation cycles (default: 1000)"
+	@echo "  MAX_TEST_CYCLES=<num>         Max simulation cycles (default: 2000)"
 	@echo "  TEST_CODE=<path>              Test code directory"
 	@echo "                                (default: Verification/TestCode/SMT_DualThread)"
 	@echo "  DUMMY_DATA_FILE=<path>        Dummy data file"
 	@echo "                                (default: Verification/DummyData.hex)"
-	@echo "  SHOW_SERIAL_OUT=<0|1>         Show serial output (default: 0)"
+	@echo "  SHOW_PREFETCH_DEBUG=<0|1>     Show prefetch debug output (default: 0)"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make -f Makefile.TestSMT_DualThread.mk"
-	@echo "  make -f Makefile.TestSMT_DualThread.mk MAX_TEST_CYCLES=5000 SHOW_SERIAL_OUT=1"
-	@echo "  make -f Makefile.TestSMT_DualThread.mk build && make -f Makefile.TestSMT_DualThread.mk run"
+	@echo "  make -f Makefile.TestSMT_RoundRobinPrefetch.mk"
+	@echo "  make -f Makefile.TestSMT_RoundRobinPrefetch.mk MAX_TEST_CYCLES=5000"
+	@echo "  make -f Makefile.TestSMT_RoundRobinPrefetch.mk build"
+	@echo "  make -f Makefile.TestSMT_RoundRobinPrefetch.mk SHOW_PREFETCH_DEBUG=1 run"
+	@echo ""
+	@echo "Output:"
+	@echo "  Test report: $(TEST_CODE)/prefetch_roundrobin_report.txt"
+	@echo "===================================="
