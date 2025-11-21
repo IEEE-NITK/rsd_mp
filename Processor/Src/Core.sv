@@ -27,11 +27,16 @@ input
     MemAccessResponse memAccessResponse, // メモリ書き込み完了通知
     logic memAccessReadBusy,
     logic memAccessWriteBusy,
-    logic reqExternalInterrupt,
-    ExternalInterruptCodePath externalInterruptCode,
+
+// SMT: External Interrupts per Thread
+    logic reqExternalInterrupt [NUM_THREADS],
+    ExternalInterruptCodePath externalInterruptCode [NUM_THREADS],
+    
 output
     DebugRegister debugRegister,
-    PC_Path lastCommittedPC,
+    // thread aware 
+    PC_Path lastCommittedPC [NUM_THREADS],
+    
     PhyAddrPath memAccessAddr,
     MemoryEntryDataPath memAccessWriteData,
     logic memAccessRE,
@@ -108,7 +113,11 @@ output
     BypassNetworkIF bypassNetworkIF( clk, rst, rstStart );
     LoadStoreUnitIF loadStoreUnitIF( clk, rst, rstStart );
     RecoveryManagerIF recoveryManagerIF( clk, rst );
-    CSR_UnitIF csrUnitIF(clk, rst, rstStart, reqExternalInterrupt, externalInterruptCode);
+
+    // SMT: Pass arrayed interrupts
+    CSR_UnitIF csrUnitIF(clk, rst, rstStart, reqExternalInterrupt[0], externalInterruptCode[0]); 
+    // Simplification: Wire T0 for now or update CSR_UnitIF to take array
+
     IO_UnitIF ioUnitIF(clk, rst, rstStart, serialWE, serialWriteData);
     MulDivUnitIF mulDivUnitIF(clk, rst);
     CacheFlushManagerIF cacheFlushManagerIF(clk, rst);
