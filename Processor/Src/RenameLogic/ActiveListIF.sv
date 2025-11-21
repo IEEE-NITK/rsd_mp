@@ -125,7 +125,7 @@ interface ActiveListIF( input logic clk, rst );
         popTailNum, // Array
         allocatable, // Array
         validEntryNum, // Array
-        pushedTailPtr
+        pushedTailPtr,
     output
         pushTid,
         pushTail,

@@ -78,7 +78,8 @@ typedef enum logic [3:0] // ExecutionState
 } ExecutionState;
 localparam EXEC_STATE_BIT_WIDTH = $bits(ExecutionState);
 
-// SMT: ActiveListEntry DEFINED HERE (Preserving Original Structure + Adding TID)
+// fix - added active list entry 
+
 typedef struct packed // ActiveListEntry
 {
     `ifndef RSD_DISABLE_DEBUG_REGISTER // Debug info
