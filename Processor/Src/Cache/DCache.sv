@@ -1365,7 +1365,9 @@ module DCacheMissHandler(
     end
 
 
-    always_comb begin
+ always_comb begin
+            ThreadID allocTid;
+            ThreadID entryTid;
 
         for (int i = 0; i < MSHR_NUM; i++) begin
             portIsAllocatedByStore[i] = port.isAllocatedByStore[i];
@@ -1374,36 +1376,37 @@ module DCacheMissHandler(
         for (int i = 0; i < MSHR_NUM; i++) begin
             nextMSHR[i] = mshr[i];
 
-
             if (port.mshrCanBeInvalidDirect[i]) begin
-                // its allocator load has received data in the RW stage.
-                // Note that a load that has allocated MSHR releases its 
-                // allocated MSHR entry even if it receives a value through 
-                // store-load forwarding.
                 nextMSHR[i].canBeInvalid = TRUE;
             end
 
+            // SMT FIX: Get TID for flush detection
+            // For new allocations, use the TID being allocated
+            // For existing entries, use the stored TID in MSHR
+            allocTid = port.initMSHR_Tid[i];
+            entryTid = mshr[i].tid;
+
             // Cancel MSHR allocation on pipeline flush
+            // SMT FIX: Use allocTid to index into recovery arrays
             flushMSHR_Allocation[i] = SelectiveFlushDetector(
-                            recovery.toRecoveryPhase,
-                            recovery.flushRangeHeadPtr,
-                            recovery.flushRangeTailPtr,
-                            recovery.flushAllInsns,
+                            recovery.toRecoveryPhase[allocTid],
+                            recovery.flushRangeHeadPtr[allocTid],
+                            recovery.flushRangeTailPtr[allocTid],
+                            recovery.flushAllInsns[allocTid],
                             port.initMSHR_ActiveListPtr[i]
                         );
+            
             // Release MSHR entry
+            // SMT FIX: Use entryTid to index into recovery arrays
             flushMSHR_Entry[i] = SelectiveFlushDetector(
-                            recovery.toRecoveryPhase,
-                            recovery.flushRangeHeadPtr,
-                            recovery.flushRangeTailPtr,
-                            recovery.flushAllInsns,
+                            recovery.toRecoveryPhase[entryTid],
+                            recovery.flushRangeHeadPtr[entryTid],
+                            recovery.flushRangeTailPtr[entryTid],
+                            recovery.flushAllInsns[entryTid],
                             mshr[i].activeListPtr
                         );
+            
             if (flushMSHR_Entry[i] && !mshr[i].isAllocatedByStore) begin
-                // Its allocator load is flushed.
-                // When an allocator load is flushed, the allocated entry must be
-                // flushed without filling a fetched line to avoid a live lock to
-                // acquire cache ports between active loads and a dead MSHR entry.
                 nextMSHR[i].isAllocatorLoadFlushed = TRUE;
                 nextMSHR[i].canBeInvalid = TRUE;
             end

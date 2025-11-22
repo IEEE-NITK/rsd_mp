@@ -1,7 +1,6 @@
 // Copyright 2019- RSD contributors.
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 
-
 //
 // Interrupt Controller (SMT)
 //
@@ -28,6 +27,9 @@ module InterruptController(
     CSR_BodyPath csrReg[NUM_THREADS];
     InterruptCodeConvPath interruptCodeConv[NUM_THREADS];
 
+    // NEW: aggregated flag over all threads
+    logic anyReqInterrupt;
+
     `RSD_STATIC_ASSERT(
         RSD_EXTERNAL_INTERRUPT_CODE_WIDTH == CSR_CAUSE_INTERRUPT_CODE_WIDTH,
         "The width of an external interrupt code and the code in the CSR do not match"
@@ -35,14 +37,18 @@ module InterruptController(
 
     always_comb begin
         
+        // Clear aggregate
+        anyReqInterrupt = 1'b0;
+
         // SMT Loop
         for(int t=0; t<NUM_THREADS; t++) begin
             csrReg[t] = csrUnit.csrWholeOut[t];
 
-            reqTimerInterrupt[t] =     csrReg[t].mie.MTIE && csrReg[t].mip.MTIP;
-            reqExternalInterrupt[t] =  csrReg[t].mie.MEIE && csrReg[t].mip.MEIP;
+            reqTimerInterrupt[t]    = csrReg[t].mie.MTIE && csrReg[t].mip.MTIP;
+            reqExternalInterrupt[t] = csrReg[t].mie.MEIE && csrReg[t].mip.MEIP;
 
-            reqInterrupt[t] = csrReg[t].mstatus.MIE && (reqTimerInterrupt[t] || reqExternalInterrupt[t]);
+            reqInterrupt[t] = csrReg[t].mstatus.MIE &&
+                              (reqTimerInterrupt[t] || reqExternalInterrupt[t]);
             
             interruptCodeConv[t].exCode = csrUnit.externalInterruptCodeInCSR[t]; 
             
@@ -57,16 +63,16 @@ module InterruptController(
             // Interrupt Trigger Logic
             // Only trigger if pipeline is empty AND recovery is done.
             // SMT Note 'ctrl.wholePipelineEmpty' might be global. 
-            // If so, both threads wait for total empty. 
+            // If so, all threads wait for total empty. 
             triggerInterrupt[t] = 
                 ctrl.wholePipelineEmpty && 
                 !recoveryManager.unableToStartRecovery[t] && 
                 reqInterrupt[t];
 
-            csrUnit.triggerInterrupt[t] = triggerInterrupt[t];
+            csrUnit.triggerInterrupt[t]   = triggerInterrupt[t];
             // Assumption: PC Out is arrayed in FetchStage
-            csrUnit.interruptRetAddr[t] = fetchStage.pcOut[t]; 
-            csrUnit.interruptCode[t] = interruptCode[t];
+            csrUnit.interruptRetAddr[t]   = fetchStage.pcOut[t]; 
+            csrUnit.interruptCode[t]      = interruptCode[t];
 
             interruptTargetAddr[t] = ToPC_FromAddr({
                 (csrReg[t].mtvec.mode == CSR_MTVEC_MODE_VECTORED) ? 
@@ -77,11 +83,13 @@ module InterruptController(
             // Drive Fetch Stage Inputs (Arrayed)
             fetchStage.interruptAddrWE[t] = triggerInterrupt[t];
             fetchStage.interruptAddrIn[t] = interruptTargetAddr[t];
+
+            // Update aggregate
+            anyReqInterrupt |= reqInterrupt[t];
         end
         
-        // Bubble Request (Aggregate)
-        ctrl.npStageSendBubbleLowerForInterrupt =
-            reqInterrupt[0] || reqInterrupt[1];
+        // Bubble Request (Aggregate over all threads)
+        ctrl.npStageSendBubbleLowerForInterrupt = anyReqInterrupt;
     end
 
 endmodule

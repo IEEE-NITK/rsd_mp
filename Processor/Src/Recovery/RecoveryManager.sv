@@ -1,7 +1,6 @@
 // Copyright 2019- RSD contributors.
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 
-
 //
 // Recovery Manager (SMT)
 // Handles recovery state machines for multiple threads independently.
@@ -53,6 +52,9 @@ module RecoveryManager(
     PC_Path recoveredPC[NUM_THREADS];
     ActiveListIndexPath exceptionOpPtr[NUM_THREADS];
     logic exceptionDetected[NUM_THREADS];
+
+    // Helper for global flush signal
+    logic anyThreadInRecoverPhase0;
 
     always_ff@(posedge port.clk) begin  // synchronous rst
         if (!port.rst) begin
@@ -124,7 +126,6 @@ module RecoveryManager(
             };
             
             // CSR Unit Interface (Arbitrated or Threaded?)
-            // Assuming CSR Unit handles array inputs
             csrUnit.triggerExcpt[t] = (regState[t].phase == PHASE_RECOVER_0) && refetchFromCSR[t];
             csrUnit.excptCauseAddr[t] = ToPC_FromAddr(regState[t].recoveredPC_FromCommitStage);
             csrUnit.excptCause[t] = regState[t].excptCause;
@@ -179,9 +180,6 @@ module RecoveryManager(
 
             // Flush Range Calculation
             exceptionDetected[t] = port.exceptionDetectedInCommitStage[t] || rw_exception_for_me;
-            // activeList needs to output exceptionOpPtr for the specific thread? 
-            // Or we calculate based on head/tail.
-            // Assuming activeList.exceptionOpPtr is valid for the recovering thread.
             exceptionOpPtr[t] = activeList.exceptionOpPtr; 
 
             nextState[t].flushRangeHeadPtr = 
@@ -201,17 +199,17 @@ module RecoveryManager(
                 port.wakeupPipelineRegFlushedOpExist;
         end 
 
-        // Muxing Global Outputs
-        // The Recovered PC for FetchStage must be selected based on which thread is recovering.
-        // If both recovering? Priority to T0 or separate PCs.
-        // FetchStage usually has separate PC inputs for recovery, or we arbitrate.
-        // Ideally FetchStage accepts recoveredPC[NUM_THREADS].
-        // For now, mapping:
-        // port.recoveredPC_FromRwCommit = recoveredPC[0] | recoveredPC[1]; (Assuming one active)
-        // BUT, if NextPCStage handles arrays, we pass the array.
-        
-        // Global Signals
-        ctrl.cmStageFlushUpper = (regState[0].phase == PHASE_RECOVER_0) || (regState[1].phase == PHASE_RECOVER_0);
+        // Muxing Global Outputs / Global Signals
+
+        // Any thread in PHASE_RECOVER_0?
+        anyThreadInRecoverPhase0 = FALSE;
+        for (int t = 0; t < NUM_THREADS; t++) begin
+            if (regState[t].phase == PHASE_RECOVER_0) begin
+                anyThreadInRecoverPhase0 = TRUE;
+            end
+        end
+
+        ctrl.cmStageFlushUpper = anyThreadInRecoverPhase0;
         
     end
 

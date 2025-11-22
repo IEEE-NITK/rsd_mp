@@ -52,6 +52,10 @@ module MulDivUnit(MulDivUnitIF.MulDivUnit port, RecoveryManagerIF.MulDivUnit rec
     logic rst_divider[MULDIV_ISSUE_WIDTH];
     ActiveListIndexPath regActiveListPtr[MULDIV_ISSUE_WIDTH];
     ActiveListIndexPath nextActiveListPtr[MULDIV_ISSUE_WIDTH];
+    
+    // SMT: Track Thread ID for divider allocation
+    ThreadID regTid[MULDIV_ISSUE_WIDTH];
+    ThreadID nextTid[MULDIV_ISSUE_WIDTH];
 
     for (genvar i = 0; i < MULDIV_ISSUE_WIDTH; i++) begin : BlockDivUnit
         DividerUnit divUnit(
@@ -71,17 +75,28 @@ module MulDivUnit(MulDivUnitIF.MulDivUnit port, RecoveryManagerIF.MulDivUnit rec
             for (int i = 0; i < MULDIV_ISSUE_WIDTH; i++) begin
                 regPhase[i] <= DIVIDER_PHASE_FREE;
                 regActiveListPtr[i] <= 0;
+                regTid[i] <= 0;
             end
         end
         else begin
             regPhase <= nextPhase;
             regActiveListPtr <= nextActiveListPtr;
+            regTid <= nextTid;
         end
     end
+
+    // Helper to derive TID from ActiveListPtr (Since we don't have TID input port explicitly)
+    // Note: Ideally MulDivUnitIF should carry TID from Issue Stage.
+    // However, since we partitioned the Active List, we can infer it.
+    function automatic ThreadID GetTidFromALPtr(ActiveListIndexPath ptr);
+        if (ptr >= (ACTIVE_LIST_ENTRY_NUM / NUM_THREADS)) return 1;
+        else return 0;
+    endfunction
 
     always_comb begin
         nextPhase = regPhase;
         nextActiveListPtr = regActiveListPtr;
+        nextTid = regTid;
 
         for (int i = 0; i < MULDIV_ISSUE_WIDTH; i++) begin
 
@@ -95,6 +110,8 @@ module MulDivUnit(MulDivUnitIF.MulDivUnit port, RecoveryManagerIF.MulDivUnit rec
                 if (port.divAcquire[i]) begin
                     nextPhase[i] = DIVIDER_PHASE_RESERVED;
                     nextActiveListPtr[i] = port.acquireActiveListPtr[i];
+                    // SMT: Capture TID
+                    nextTid[i] = GetTidFromALPtr(port.acquireActiveListPtr[i]);
                 end
             end
 
@@ -129,11 +146,12 @@ module MulDivUnit(MulDivUnitIF.MulDivUnit port, RecoveryManagerIF.MulDivUnit rec
 
 
             // Cancel divider allocation on pipeline flush
+            // SMT FIX: Use stored TID to check specific recovery signal
             flush[i] = SelectiveFlushDetector(
-                recovery.toRecoveryPhase,
-                recovery.flushRangeHeadPtr,
-                recovery.flushRangeTailPtr,
-                recovery.flushAllInsns,
+                recovery.toRecoveryPhase[regTid[i]],
+                recovery.flushRangeHeadPtr[regTid[i]],
+                recovery.flushRangeTailPtr[regTid[i]],
+                recovery.flushAllInsns[regTid[i]],
                 regActiveListPtr[i]
             );
 

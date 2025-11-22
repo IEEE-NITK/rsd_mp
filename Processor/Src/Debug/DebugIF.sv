@@ -61,7 +61,7 @@ interface DebugIF( input logic clk, rst );
     SchedulerDebugRegister  scheduler [ ISSUE_QUEUE_ENTRY_NUM ];
     IssueQueueDebugRegister issueQueue [ ISSUE_QUEUE_ENTRY_NUM ];
 
-    PC_Path lastCommittedPC[NUM_THREADS];
+    PC_Path lastCommittedPC [NUM_THREADS];
     logic recover, toRecoveryPhase;
     ActiveListIndexPath activeListHeadPtr;
     ActiveListCountPath activeListCount;

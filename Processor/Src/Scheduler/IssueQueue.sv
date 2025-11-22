@@ -81,37 +81,41 @@ module IssueQueue (
         );
 
     always_comb begin
+        logic queueAllocatable;
         // --- Defaults to avoid inferred latches ------------------------------
-        port.allocatable = FALSE;
         // default the release arrays to safe values
         for (int i = 0; i < ISSUE_WIDTH + ISSUE_QUEUE_RETURN_INDEX_WIDTH; i++) begin
             releaseEntry[i] = FALSE;
-            releasePtr[i] = '0;
+            releasePtr[i]   = '0;
+        end
+
+        // Compute scalar condition: is the IQ free list big enough?
+        queueAllocatable = (!freeListReset && freeListCount >= RENAME_WIDTH);
+
+        // Drive per-thread allocatable (for now, same for all threads)
+        for (int t = 0; t < NUM_THREADS; t++) begin
+            port.allocatable[t] = queueAllocatable;
         end
         // --------------------------------------------------------------------
 
-        // Allocate
-        // freeListReset がアサートされているリセット中に，
-        // 新しくエントリを確保させるとキューがこわれるのでブロックする
-        port.allocatable = (!freeListReset && freeListCount >= RENAME_WIDTH) ? TRUE : FALSE;
-
         // Release
         for ( int i = 0; i < ISSUE_WIDTH; i++ ) begin
-            releasePtr[i] = wakeupSelect.releasePtr[i];
+            releasePtr[i]   = wakeupSelect.releasePtr[i];
             releaseEntry[i] = wakeupSelect.releaseEntry[i];
         end
         for ( int i = 0; i < ISSUE_QUEUE_RETURN_INDEX_WIDTH; i++ ) begin
             if ( issueQueueReturnIndex && prevFlushAtRecovery[returnIndexOffset+i] ) begin
                 releaseEntry[ ISSUE_WIDTH + i ] = TRUE;
-                releasePtr[ ISSUE_WIDTH + i ] = returnIndexOffset + i;
+                releasePtr[ ISSUE_WIDTH + i ]   = returnIndexOffset + i;
             end
             else begin
                 releaseEntry[ ISSUE_WIDTH + i ] = FALSE;
                 //Don't care - still assign deterministic value
-                releasePtr[ ISSUE_WIDTH + i ] = returnIndexOffset + i;
+                releasePtr[ ISSUE_WIDTH + i ]   = returnIndexOffset + i;
             end
         end
     end
+
 
     // Reset(when recovery at commit occurs)
     always_ff @( posedge port.clk ) begin

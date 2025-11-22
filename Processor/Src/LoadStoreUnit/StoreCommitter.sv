@@ -46,14 +46,25 @@ module StoreCommitter(
         end
     end
 
+// SMT: Helper signal to check if any thread is recovering
+    logic anyThreadRecovering;
+    
+    always_comb begin
+        anyThreadRecovering = FALSE;
+        for (int t = 0; t < NUM_THREADS; t++) begin
+            if (recovery.toRecoveryPhase[t]) begin
+                anyThreadRecovering = TRUE;
+            end
+        end
+    end
+
     always_comb begin
         // Decide a next phase.
         if(port.rst) begin
             nextPhase = PHASE_COMMIT;
         end
         // Trigger if any thread requests recovery
-        else if (| {recovery.toRecoveryPhase}) begin
-
+        else if (anyThreadRecovering) begin
             nextPhase = PHASE_RECOVER;
         end
         else if (phase == PHASE_RECOVER ) begin

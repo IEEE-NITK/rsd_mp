@@ -55,15 +55,15 @@ module MemoryAccessStage(
 
 
 
-    logic isStore  [ MEM_ISSUE_WIDTH ];
-    logic isLoad  [ MEM_ISSUE_WIDTH ];
-    logic isCSR   [ MEM_ISSUE_WIDTH ];
-    logic isDiv   [ MEM_ISSUE_WIDTH ];
-    logic isMul   [ MEM_ISSUE_WIDTH ];
+    logic isStore   [ MEM_ISSUE_WIDTH ];
+    logic isLoad    [ MEM_ISSUE_WIDTH ];
+    logic isCSR     [ MEM_ISSUE_WIDTH ];
+    logic isDiv     [ MEM_ISSUE_WIDTH ];
+    logic isMul     [ MEM_ISSUE_WIDTH ];
 
 
-    logic valid   [ MEM_ISSUE_WIDTH ];
-    logic update  [ MEM_ISSUE_WIDTH ];
+    logic valid     [ MEM_ISSUE_WIDTH ];
+    logic update    [ MEM_ISSUE_WIDTH ];
 
     logic regValid[ MEM_ISSUE_WIDTH ];
 
@@ -71,6 +71,9 @@ module MemoryAccessStage(
     logic stall, clear;
     logic flush[ MEM_ISSUE_WIDTH ];
     MemoryRegisterWriteStageRegPath nextStage [ MEM_ISSUE_WIDTH ];
+
+    // SMT FIX: Declare ThreadID array
+    ThreadID opTid [ MEM_ISSUE_WIDTH ];
 
     PRegDataPath  dataOut[MEM_ISSUE_WIDTH];
     PRegDataPath  ldDataOut[LOAD_ISSUE_WIDTH];
@@ -83,14 +86,20 @@ module MemoryAccessStage(
         clear = ctrl.backEnd.clear;
 
         for ( int i = 0; i < MEM_ISSUE_WIDTH; i++ ) begin
+            // SMT FIX: Extract TID from pipeline register
+            opTid[i] = pipeReg[i].tid;
+
             valid[i]   = pipeReg[i].valid;
+            
+            // SMT FIX: Use opTid to index recovery signals
             flush[i] = SelectiveFlushDetector(
-                            recovery.toRecoveryPhase,
-                            recovery.flushRangeHeadPtr,
-                            recovery.flushRangeTailPtr,
-                            recovery.flushAllInsns,
-                            pipeReg[i].activeListPtr
+                        recovery.toRecoveryPhase[opTid[i]],
+                        recovery.flushRangeHeadPtr[opTid[i]],
+                        recovery.flushRangeTailPtr[opTid[i]],
+                        recovery.flushAllInsns[opTid[i]],
+                        pipeReg[i].activeListPtr // Use pipeReg directly for ActiveListPtr
                         );
+
             isStore[i] = pipeReg[i].isStore;
             isLoad[i]  = pipeReg[i].isLoad;
             isCSR[i]   = pipeReg[i].isCSR;
@@ -184,6 +193,9 @@ module MemoryAccessStage(
             nextStage[i].hasAllocatedMSHR = pipeReg[i].hasAllocatedMSHR;
             nextStage[i].mshrID = pipeReg[i].mshrID;
             nextStage[i].storeForwardMiss = pipeReg[i].storeForwardMiss;
+            
+            // SMT FIX: Propagate TID to next stage
+            nextStage[i].tid = opTid[i];
 
             // リセットorフラッシュ時はNOP
             nextStage[i].valid =

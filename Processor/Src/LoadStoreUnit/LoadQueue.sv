@@ -1,7 +1,6 @@
 // Copyright 2019- RSD contributors.
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 
-
 //
 // Load queue
 //
@@ -39,43 +38,49 @@ module LoadQueue(
     RenameLaneCountPath pushCount;  // pushed count.
     LoadQueueCountPath curCount;    // current size.
     
-    // SMT: Release logic handles array inputs (ORed logic for single-thread commit assumption, or summed)
-    // Assuming releaseLoadQueue is per thread but LQ is shared.
-    // We must sum releases if multiple threads commit (or OR if arbiter).
-    // For simplicity, we assume arbiter-based commit means only one thread active.
+    // SMT: Release logic handles array inputs
     logic releaseLoadQueueMerged;
     CommitLaneCountPath releaseLoadQueueEntryNumMerged;
     
+    // SMT: Helper signal for recovery trigger
+    logic anyThreadRecovering;
+    
     always_comb begin
-        releaseLoadQueueMerged = port.releaseLoadQueue[0] | port.releaseLoadQueue[1];
-        if (port.releaseLoadQueue[0]) releaseLoadQueueEntryNumMerged = port.releaseLoadQueueEntryNum[0];
-        else releaseLoadQueueEntryNumMerged = port.releaseLoadQueueEntryNum[1];
+        // Merge release signals across commit lanes (generalized, no hard-coded [1])
+        releaseLoadQueueMerged       = FALSE;
+        releaseLoadQueueEntryNumMerged = '0;
+
+        for (int c = 0; c < COMMIT_WIDTH; c++) begin
+            if (port.releaseLoadQueue[c]) begin
+                releaseLoadQueueMerged         = TRUE;
+                releaseLoadQueueEntryNumMerged = port.releaseLoadQueueEntryNum[c];
+                // If you want "lowest c wins", keep this; if you want "highest c wins", remove break.
+                // break;
+            end
+        end
+        
+        // SMT: Compute if any thread is recovering
+        anyThreadRecovering = FALSE;
+        for (int t = 0; t < NUM_THREADS; t++) begin
+            if (recovery.toRecoveryPhase[t]) anyThreadRecovering = TRUE;
+        end
     end
 
-    SetTailMultiWidthQueuePointer #(LOAD_QUEUE_ENTRY_NUM, 0, 0, 0, RENAME_WIDTH, COMMIT_WIDTH)
-        loadQueuePointer(
-            .clk(port.clk),
-            .rst(reset),
-            .pop(releaseLoadQueueMerged),
-            .popCount(releaseLoadQueueEntryNumMerged),
-            .push(push),
-            .pushCount(pushCount),
-            // SMT: Recovery tail pointer logic needs to handle thread-specific recovery?
-            // If T0 flushes, we need to reset tail to T0's recovery ptr. 
-            // BUT LQ is shared. If we reset tail, we kill T1's newer instructions too.
-            // Correct SMT LQ/SQ implementation requires Partitioned Pointers (like ActiveList)
-            // or Linked List.
-            // smt fix - dont rollback, just broadcast a signal flush_tid to make all mops matching tid flush,
-            //  but other tid mops will stay and continue to execute.
-            // this is a local hack to avoid making a linked list structure for LQ/SQ in verilog.
-            // comes with the tradeooff that LQ/SQ can be partially filled with flushed entries.
-
-            .setTail(|{recovery.toRecoveryPhase}), // Trigger on any thread)
-            .setTailPtr(recovery.loadQueueRecoveryTailPtr), // Assumption: Single recovery at a time
-            .count(curCount),
-            .headPtr(headPtr),
-            .tailPtr(tailPtr)
-        );
+    SetTailMultiWidthQueuePointer #(
+        LOAD_QUEUE_ENTRY_NUM, 0, 0, 0, RENAME_WIDTH, COMMIT_WIDTH
+    ) loadQueuePointer(
+        .clk(port.clk),
+        .rst(reset),
+        .pop(releaseLoadQueueMerged),
+        .popCount(releaseLoadQueueEntryNumMerged),
+        .push(push),
+        .pushCount(pushCount),
+        .setTail(anyThreadRecovering), // SMT FIX: Use helper signal
+        .setTailPtr(recovery.loadQueueRecoveryTailPtr),
+        .count(curCount),
+        .headPtr(headPtr),
+        .tailPtr(tailPtr)
+    );
 
     always_comb begin
         // Generate push signals.
@@ -112,7 +117,7 @@ module LoadQueue(
         if (reset) begin
             for (int i = 0; i < LOAD_QUEUE_ENTRY_NUM; i++) begin
                 loadQueue[i].finished <= FALSE;
-                loadQueue[i].tid <= 0;
+                loadQueue[i].tid      <= 0;
             end
         end
         else begin
@@ -120,11 +125,11 @@ module LoadQueue(
                 if (port.executeLoad[i]) begin
                     loadQueue[ executedLoadQueuePtrByLoad[i] ].regValid <= executedLoadRegValid[i];
                     loadQueue[ executedLoadQueuePtrByLoad[i] ].finished <= TRUE;
-                    loadQueue[ executedLoadQueuePtrByLoad[i] ].address <= executedLoadAddr[i];
-                    loadQueue[ executedLoadQueuePtrByLoad[i] ].wordRE <= executedLoadWordRE[i];
-                    loadQueue[ executedLoadQueuePtrByLoad[i] ].pc <= port.executedLoadPC[i];
+                    loadQueue[ executedLoadQueuePtrByLoad[i] ].address  <= executedLoadAddr[i];
+                    loadQueue[ executedLoadQueuePtrByLoad[i] ].wordRE   <= executedLoadWordRE[i];
+                    loadQueue[ executedLoadQueuePtrByLoad[i] ].pc       <= port.executedLoadPC[i];
                     // SMT: Capture TID
-                    loadQueue[ executedLoadQueuePtrByLoad[i] ].tid <= port.executedLoadTid[i];
+                    loadQueue[ executedLoadQueuePtrByLoad[i] ].tid      <= port.executedLoadTid[i];
                 end
             end
 
@@ -138,10 +143,10 @@ module LoadQueue(
 
     always_comb begin
         for (int i = 0; i < LOAD_ISSUE_WIDTH; i++) begin
-            executedLoadRegValid[i] = port.executedLoadRegValid[i];
-            executedLoadQueuePtrByLoad[i] = port.executedLoadQueuePtrByLoad[i];
-            executedLoadAddr[i] = LSQ_ToBlockAddr(port.executedLoadAddr[i]);
-            executedLoadWordRE[i] =
+            executedLoadRegValid[i]           = port.executedLoadRegValid[i];
+            executedLoadQueuePtrByLoad[i]     = port.executedLoadQueuePtrByLoad[i];
+            executedLoadAddr[i]               = LSQ_ToBlockAddr(port.executedLoadAddr[i]);
+            executedLoadWordRE[i]             =
                 LSQ_ToBlockWordEnable(
                     port.executedLoadAddr[i],
                     port.executedLoadMemAccessMode[i]
@@ -171,7 +176,7 @@ module LoadQueue(
         end
     endgenerate
 
-    // This flags are TRUE if violation is detected.
+    // These flags are TRUE if violation is detected.
     logic violation[STORE_ISSUE_WIDTH];
 
     // The addresses of executed stores/loads.
@@ -189,8 +194,8 @@ module LoadQueue(
         // Detect access order violation between already executed loads and
         // a currently executed store.
         for (int si = 0; si < STORE_ISSUE_WIDTH; si++) begin
-            violation[si] = FALSE;
-            conflictLoadPC[si] = '0;
+            violation[si]         = FALSE;
+            conflictLoadPC[si]    = '0;
             executedStoreAddr[si] = LSQ_ToBlockAddr(port.executedStoreAddr[si]);
             executedStoreWordWE[si] = LSQ_ToBlockWordEnable(
                 port.executedStoreAddr[si],
@@ -203,11 +208,10 @@ module LoadQueue(
         for (int si = 0; si < STORE_ISSUE_WIDTH; si++) begin
             for (int lqe = 0; lqe < LOAD_QUEUE_ENTRY_NUM; lqe++) begin
                 // SMT: Add Thread Check
-                // Only match if loadQueue[lqe].tid == executedStoreTid[si]
                 addrMatch[si][lqe] =
                     loadQueue[lqe].finished &&
                     loadQueue[lqe].regValid &&
-                    (loadQueue[lqe].tid == port.executedLoadTid[si]) && // TID Match
+                    (loadQueue[lqe].tid == port.executedStoreTid[si]) && // TID Match
                     loadQueue[lqe].address == executedStoreAddr[si] &&
                     (loadQueue[lqe].wordRE & executedStoreWordWE[si]) != '0;
             end
@@ -256,7 +260,7 @@ module LoadQueue(
                     LoadQueuePtrToAge(executedLoadQueuePtrByStore[si], headPtr)
                 ) begin
                     // Violation is caused by load & store executed in this cycle.
-                    violation[si] = TRUE;
+                    violation[si]      = TRUE;
                     conflictLoadPC[si] = port.executedLoadPC[li];
                 end
             end
@@ -268,7 +272,5 @@ module LoadQueue(
             port.conflict[i] = violation[i];
         end
     end
-
-    // [Assertions omitted for brevity, they remain valid]
 
 endmodule : LoadQueue

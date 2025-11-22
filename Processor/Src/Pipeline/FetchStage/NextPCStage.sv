@@ -125,12 +125,16 @@ module NextPCStage(
     end
 
     PC_Path predNextPC;
+    PC_Path interruptPC;      // <--- NEW: interrupt-selected PC
     FetchStageRegPath nextStage[ FETCH_WIDTH ];
 
     // Helper logic to aggregate array signals
     logic isAnyInterrupt;
     logic isAnyRecovery;
 
+    //
+    // Main control / arbitration
+    //
     always_comb begin
         // Control
         stall = ctrl.npStage.stall;
@@ -149,9 +153,17 @@ module NextPCStage(
         // Check arrays for external triggers
         isAnyInterrupt = FALSE;
         isAnyRecovery = FALSE;
-        for(int t=0; t<NUM_THREADS; t++) begin
-            if (port.interruptAddrWE[t]) isAnyInterrupt = TRUE;
-            if (recovery.toRecoveryPhase[t]) isAnyRecovery = TRUE;
+        interruptPC   = '0;     // default value
+
+        for (int t = 0; t < NUM_THREADS; t++) begin
+            if (port.interruptAddrWE[t]) begin
+                isAnyInterrupt = TRUE;
+                interruptPC    = port.interruptAddrIn[t];
+                // If you want "lowest thread ID wins", you can add: break;
+            end
+            if (recovery.toRecoveryPhase[t]) begin
+                isAnyRecovery = TRUE;
+            end
         end
 
         // Whether PC is written from outside
@@ -233,12 +245,8 @@ module NextPCStage(
 
         // --- PC Input Data Calculation
         if (isAnyInterrupt) begin
-            // When an interrupt occurs, use interrupt address.
-            // SMT: Mux the correct interrupt address
-            if (port.interruptAddrWE[0])
-                port.pcIn = port.interruptAddrIn[0];
-            else
-                port.pcIn = port.interruptAddrIn[1];
+            // When an interrupt occurs, use the selected interrupt address.
+            port.pcIn = interruptPC;
         end
         else if (beginStall) begin
             // Update PC based on the branch prediction result accessed
@@ -249,8 +257,8 @@ module NextPCStage(
             // Increment PC
             port.pcIn = predNextPC + FETCH_WIDTH*INSN_BYTE_WIDTH;
             for (int i = 1; i < FETCH_WIDTH; i++) begin
-                if (StepOverCacheLine(predNextPC, 
-                                    predNextPC + i * INSN_BYTE_WIDTH)) begin
+                if (StepOverCacheLine(predNextPC,
+                                      predNextPC + i * INSN_BYTE_WIDTH)) begin
                     // When PC stepped over the border of cache line, stop there
                     port.pcIn = predNextPC + i * INSN_BYTE_WIDTH;
                     break;
@@ -273,7 +281,7 @@ module NextPCStage(
             end
             else if (recovery.recoverFromRename) begin
                  // Safe fallback: Enable for current thread if recovering from rename.
-                 port.pcWE[t] = (t == currentThread); 
+                 port.pcWE[t] = (t == currentThread);
             end
             else if (t == currentThread) begin
                 // Normal Fetch: Only update the current thread's PC
@@ -307,8 +315,6 @@ module NextPCStage(
         // Drive the interface structure
         port.nextStage = nextStage;
     end
-
-
 
 
     //

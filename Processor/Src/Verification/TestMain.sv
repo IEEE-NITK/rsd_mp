@@ -53,7 +53,9 @@ module TestMain;
     `ifdef RSD_FUNCTIONAL_SIMULATION
         `ifndef RSD_POST_SYNTHESIS_SIMULATION
             // RetirementRMTからコミット済の論理レジスタの値を得る
+            // SMT FIX: Added tid parameter to select which thread's state to read
             task GetCommittedRegisterValue(
+                input int tid,  // SMT: Thread ID
                 input int commitNumInThisCycle,
                 output DataPath regData[ LREG_NUM ]
             );
@@ -71,7 +73,8 @@ module TestMain;
                 end
 
                 // Update RRMT
-                alHeadPtr = main.main.core.activeList.headPtr;
+                // SMT FIX: Use thread-specific headPtr
+                alHeadPtr = main.main.core.activeList.headPtr[tid];
                 for( int i = 0; i < commitNumInThisCycle; i++ ) begin
                     alHead = main.main.core.activeList.activeList.debugValue[ alHeadPtr ];
                     if ( alHead.writeReg ) begin
@@ -269,11 +272,13 @@ module TestMain;
                     if ( enableDumpRegCSV ) begin
                         registerFileCSV_Dumper.ProceedCycle();
 
-                        for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
-                            if ( main.main.core.cmStage.commit[i] ) begin
-                                GetCommittedRegisterValue( i, regData );
-                               // SMT FIX: Select Thread 0 for CSV dumping (or loop over threads if you want both)
-                                registerFileCSV_Dumper.Dump( main.main.core.cmStage.alReadData[0][i].pc, regData );                         
+                        // SMT FIX: Iterate over threads
+                        for (int t = 0; t < NUM_THREADS; t++) begin
+                            for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
+                                if ( main.main.core.cmStage.commit[t][i] ) begin
+                                    GetCommittedRegisterValue( t, i, regData );
+                                    registerFileCSV_Dumper.Dump( main.main.core.cmStage.alReadData[t][i].pc, regData );                         
+                                end
                             end
                         end
                     end
@@ -327,14 +332,20 @@ module TestMain;
         `ifdef RSD_FUNCTIONAL_SIMULATION
             `ifndef RSD_POST_SYNTHESIS_SIMULATION
                 // Count the number of commit in the last cycle.
-                for ( count = 0; count < COMMIT_WIDTH; count++ ) begin
-                    if ( !main.main.core.cmStage.commit[count] )
-                        break;
+                // SMT FIX: Check commits across all threads
+                count = 0;
+                for (int t = 0; t < NUM_THREADS; t++) begin
+                    for (int i = 0; i < COMMIT_WIDTH; i++) begin
+                        if ( main.main.core.cmStage.commit[t][i] ) begin
+                            count++;
+                        end
+                    end
                 end
                 commitNumInLastCycle = count;
 
                 // Dump Register File
-                GetCommittedRegisterValue( commitNumInLastCycle, regData );
+                // SMT FIX: Use thread 0 for final register dump (or choose based on your needs)
+                GetCommittedRegisterValue( 0, commitNumInLastCycle, regData );
                 registerFileHexDumper = new;
                 registerFileHexDumper.Open( regOutFileName );
                 registerFileHexDumper.Dump( lastCommittedPC, regData );
@@ -347,4 +358,3 @@ module TestMain;
     end
 
 endmodule
-

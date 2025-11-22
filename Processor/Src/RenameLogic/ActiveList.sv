@@ -45,6 +45,9 @@ module ActiveList(
     ActiveListIndexPath pushedTailPtr [RENAME_WIDTH]; // Output to RenameLogic
     RenameLaneCountPath pushNum; // Current cycle push count
 
+    // Helper for global empty flag
+    logic allEmpty;
+
     // Generate Pointers for each thread
     // no muxing, sequential commit from one thread only commit width per thread.
     // between threads, commit is round robin.
@@ -115,7 +118,14 @@ module ActiveList(
             end
         end
 
-        ctrl.activeListEmpty = (count[0] == 0) && (count[1] == 0);
+        // Global "empty" flag over all threads
+        allEmpty = TRUE;
+        for (int i = 0; i < NUM_THREADS; i++) begin
+            if (count[i] != 0) begin
+                allEmpty = FALSE;
+            end
+        end
+        ctrl.activeListEmpty = allEmpty;
     end
 
 

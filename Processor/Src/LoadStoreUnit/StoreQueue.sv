@@ -46,10 +46,19 @@ module StoreQueue(
     logic releaseStoreQueueHeadMerged;
     CommitLaneCountPath releaseStoreQueueHeadEntryNumMerged;
     
+    // SMT: Helper signal for recovery trigger
+    logic anyThreadRecovering;
+    
     always_comb begin
         // Assuming store release signal is global or arbitrated at committer
         releaseStoreQueueHeadMerged = port.releaseStoreQueueHead;
         releaseStoreQueueHeadEntryNumMerged = port.releaseStoreQueueHeadEntryNum;
+        
+        // SMT: Compute if any thread is recovering
+        anyThreadRecovering = FALSE;
+        for (int t = 0; t < NUM_THREADS; t++) begin
+            if (recovery.toRecoveryPhase[t]) anyThreadRecovering = TRUE;
+        end
     end
 
     SetTailMultiWidthQueuePointer #( STORE_QUEUE_ENTRY_NUM, 0, 0, 0, RENAME_WIDTH, COMMIT_WIDTH )
@@ -60,7 +69,7 @@ module StoreQueue(
             .popCount(releaseStoreQueueHeadEntryNumMerged),
             .push(push),
             .pushCount(pushCount),
-            .setTail(|{recovery.toRecoveryPhase}), // Trigger on any thread
+            .setTail(anyThreadRecovering), // SMT FIX: Use helper signal
             .setTailPtr(recovery.storeQueueRecoveryTailPtr),
             .count(curCount),
             .headPtr(headPtr),
@@ -109,7 +118,7 @@ module StoreQueue(
                 storeQueue[i].address <= '0;
                 storeQueue[i].wordWE <= '0;
                 storeQueue[i].byteWE <= '0;
-                storeQueue[i].tid <= 0; // Reset TID
+                storeQueue[i].tid <= 0;
             end
         end
         else begin
@@ -304,7 +313,5 @@ module StoreQueue(
         port.forwardMiss = forwardMiss;
         port.storeLoadForwarded = storeLoadForwarded;
     end
-
-    // [Assertions omitted for brevity]
 
 endmodule : StoreQueue

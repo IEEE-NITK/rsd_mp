@@ -19,7 +19,7 @@ interface SchedulerIF( input logic clk, rst, rstStart );
     // Allocation
     logic               allocate [ RENAME_WIDTH ];
     IssueQueueIndexPath allocatedPtr [ RENAME_WIDTH ];
-    logic               allocatable;
+    logic               allocatable[NUM_THREADS];
 
     // Dispatch
     logic               write [ DISPATCH_WIDTH ];
