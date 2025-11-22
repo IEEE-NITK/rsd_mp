@@ -24,6 +24,7 @@ input
     MemoryEntryDataPath memReadData,
     logic memReadDataReady,
     MemAccessSerial memReadSerial, // メモリの読み出しデータのシリアル
+    ThreadID memReadTid, // Thread ID associated with the memory read response (for SMT)
     MemAccessResponse memAccessResponse, // メモリ書き込み完了通知
     logic memAccessReadBusy,
     logic memAccessWriteBusy,
@@ -130,6 +131,7 @@ output
         .memReadDataReady( memReadDataReady ),
         .memReadData( memReadData ),
         .memReadSerial( memReadSerial ),
+        .memReadTid( memReadTid ),
         .memAccessResponse( memAccessResponse )
     );
 

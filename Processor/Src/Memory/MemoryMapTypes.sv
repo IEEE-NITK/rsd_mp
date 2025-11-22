@@ -9,6 +9,7 @@
 package MemoryMapTypes;
 
 import BasicTypes::*;
+import MicroArchConf::*;
 
 
 //
@@ -49,23 +50,37 @@ localparam PC_WIDTH = ADDR_WIDTH;
 `endif
 
 localparam PC_TAG = ADDR_WIDTH - PC_WIDTH;
-typedef logic [PC_WIDTH-1:0] PC_Path;
+
+// PC with thread ID for SMT support
+typedef struct packed {
+    logic [PC_WIDTH-1:0] addr;
+    ThreadID tid;
+} PC_Path;
 
 // 圧縮されたPCを32ビットアドレスに変換する
 function automatic AddrPath ToAddrFromPC ( PC_Path pc );
+    AddrPath result;
 `ifdef RSD_NARROW_PC
-    return { pc[PC_WIDTH-1], { PC_TAG{1'b0} }, pc[PC_WIDTH-2:0] };
+    result.addr = { pc.addr[PC_WIDTH-1], { PC_TAG{1'b0} }, pc.addr[PC_WIDTH-2:0] };
 `else
-    return pc;
+    result.addr = pc.addr;
 `endif
+    result.tid = pc.tid;
+    return result;
 endfunction
 
-// 32ビットアドレスを圧縮する
+// 32ビットアドレスを圧縮する (thread ID is extracted from AddrPath)
 function automatic PC_Path ToPC_FromAddr ( AddrPath addr );
 `ifdef RSD_NARROW_PC
-    return { addr[ADDR_WIDTH-1], addr [PC_WIDTH-2:0] };
+    PC_Path pc;
+    pc.addr = { addr.addr[ADDR_WIDTH-1], addr.addr [PC_WIDTH-2:0] };
+    pc.tid = addr.tid;
+    return pc;
 `else
-    return addr;
+    PC_Path pc;
+    pc.addr = addr.addr;
+    pc.tid = addr.tid;
+    return pc;
 `endif
 endfunction
 
@@ -172,19 +187,19 @@ localparam PHY_ADDR_TIMER_ZONE_BIT_WIDTH = 4;
 
 // Get a memory type from a logical address
 function automatic MemoryMapType GetMemoryMapType(AddrPath addr);
-    if (addr == LOG_ADDR_SERIAL_OUTPUT) begin
+    if (addr.addr == LOG_ADDR_SERIAL_OUTPUT) begin
         return MMT_IO;
     end
-    else if (LOG_ADDR_TIMER_BEGIN <= addr && addr < LOG_ADDR_TIMER_END) begin
+    else if (LOG_ADDR_TIMER_BEGIN <= addr.addr && addr.addr < LOG_ADDR_TIMER_END) begin
         return MMT_IO;
     end
-    else if (LOG_ADDR_UNCACHABLE_BEGIN <= addr && addr < LOG_ADDR_UNCACHABLE_END) begin
+    else if (LOG_ADDR_UNCACHABLE_BEGIN <= addr.addr && addr.addr < LOG_ADDR_UNCACHABLE_END) begin
         return MMT_MEMORY;
     end
-    else if (LOG_ADDR_SECTION_0_BEGIN <= addr && addr < LOG_ADDR_SECTION_0_END) begin
+    else if (LOG_ADDR_SECTION_0_BEGIN <= addr.addr && addr.addr < LOG_ADDR_SECTION_0_END) begin
         return MMT_MEMORY;
     end
-    else if (LOG_ADDR_SECTION_1_BEGIN <= addr && addr < LOG_ADDR_SECTION_1_END) begin
+    else if (LOG_ADDR_SECTION_1_BEGIN <= addr.addr && addr.addr < LOG_ADDR_SECTION_1_END) begin
         return MMT_MEMORY;
     end
     else begin
@@ -196,38 +211,38 @@ endfunction
 function automatic PhyAddrPath ToPhyAddrFromLogical(AddrPath logAddr);
     PhyAddrPath phyAddr;
 
-    if (logAddr == LOG_ADDR_SERIAL_OUTPUT) begin
+    if (logAddr.addr == LOG_ADDR_SERIAL_OUTPUT) begin
         phyAddr.isUncachable = TRUE;
         phyAddr.isIO = TRUE;
         phyAddr.addr = PHY_ADDR_SERIAL_OUTPUT;
     end
-    else if (LOG_ADDR_TIMER_BEGIN <= logAddr && logAddr < LOG_ADDR_TIMER_END) begin
+    else if (LOG_ADDR_TIMER_BEGIN <= logAddr.addr && logAddr.addr < LOG_ADDR_TIMER_END) begin
         phyAddr.isUncachable = TRUE;
         phyAddr.isIO = TRUE;
         phyAddr.addr = PHY_ADDR_TIMER_BASE + 
-            logAddr[PHY_ADDR_TIMER_ZONE_BIT_WIDTH-1:0];
+            logAddr.addr[PHY_ADDR_TIMER_ZONE_BIT_WIDTH-1:0];
     end
-    else if (LOG_ADDR_UNCACHABLE_BEGIN <= logAddr && logAddr < LOG_ADDR_UNCACHABLE_END) begin
+    else if (LOG_ADDR_UNCACHABLE_BEGIN <= logAddr.addr && logAddr.addr < LOG_ADDR_UNCACHABLE_END) begin
         // Uncachable region (RAM?)
         phyAddr.isUncachable = TRUE;
         phyAddr.isIO = FALSE;
         phyAddr.addr = PHY_ADDR_UNCACHABLE_BASE + 
-            logAddr[LOG_ADDR_UNCACHABLE_ADDR_BIT_WIDTH-1:0];
+            logAddr.addr[LOG_ADDR_UNCACHABLE_ADDR_BIT_WIDTH-1:0];
     end
     
-    else if (LOG_ADDR_SECTION_0_BEGIN <= logAddr && logAddr < LOG_ADDR_SECTION_0_END) begin
+    else if (LOG_ADDR_SECTION_0_BEGIN <= logAddr.addr && logAddr.addr < LOG_ADDR_SECTION_0_END) begin
         // Section 0 (ROM?)
         phyAddr.isUncachable = FALSE;
         phyAddr.isIO = FALSE;
         phyAddr.addr = PHY_ADDR_SECTION_0_BASE + 
-            logAddr[LOG_ADDR_SECTION_0_ADDR_BIT_WIDTH:0];
+            logAddr.addr[LOG_ADDR_SECTION_0_ADDR_BIT_WIDTH:0];
     end
-    else if (LOG_ADDR_SECTION_1_BEGIN <= logAddr && logAddr < LOG_ADDR_SECTION_1_END) begin
+    else if (LOG_ADDR_SECTION_1_BEGIN <= logAddr.addr && logAddr.addr < LOG_ADDR_SECTION_1_END) begin
         // Section 1 (RAM?)
         phyAddr.isUncachable = FALSE;
         phyAddr.isIO = FALSE;
         phyAddr.addr = PHY_ADDR_SECTION_1_BASE + 
-            logAddr[LOG_ADDR_SECTION_1_ADDR_BIT_WIDTH-1:0];
+            logAddr.addr[LOG_ADDR_SECTION_1_ADDR_BIT_WIDTH-1:0];
     end
     else begin
         // Invalid

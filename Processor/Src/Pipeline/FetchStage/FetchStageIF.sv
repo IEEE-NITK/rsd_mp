@@ -5,7 +5,6 @@
 //
 // --- FetchStageIF
 //
-
 import BasicTypes::*;
 import PipelineTypes::*;
 import FetchUnitTypes::*;
@@ -14,28 +13,33 @@ import MemoryMapTypes::*;
 interface FetchStageIF( input logic clk, rst, rstStart );
 
     // This Stage
-    logic  fetchStageIsValid[FETCH_WIDTH];
+    logic   fetchStageIsValid[FETCH_WIDTH];
     PC_Path fetchStagePC[FETCH_WIDTH];
 
     // BTB
     PC_Path btbOut[FETCH_WIDTH];
-    logic btbHit[FETCH_WIDTH];
-    logic readIsCondBr[FETCH_WIDTH];
+    logic   btbHit[FETCH_WIDTH];
+    logic   readIsCondBr[FETCH_WIDTH];
     
     // BranchPredictor
-    logic updateBrHistory[FETCH_WIDTH];
-    logic brPredTaken[FETCH_WIDTH];
+    logic                   updateBrHistory[FETCH_WIDTH];
+    logic                   brPredTaken[FETCH_WIDTH];
     BranchGlobalHistoryPath brGlobalHistory[FETCH_WIDTH];
-    PHT_EntryPath phtPrevValue[FETCH_WIDTH];
+    PHT_EntryPath           phtPrevValue[FETCH_WIDTH];
 
     // I-Cache
-    logic     icReadHit [ FETCH_WIDTH ];
-    logic     icRE;
-    InsnPath  icReadDataOut[ FETCH_WIDTH ];
-    PhyAddrPath   icReadAddrIn; // Head addr to fetch
+    logic        icReadHit [ FETCH_WIDTH ];
+    logic        icRE;
+    InsnPath     icReadDataOut[ FETCH_WIDTH ];
+    PhyAddrPath  icReadAddrIn; // Head addr to fetch
+
+    // Active thread for ICache access (from NextPCStage)
+    ThreadID  activeThreadForICache;
 
     // Pipeline register
     PreDecodeStageRegPath nextStage[ FETCH_WIDTH ];
+
+    // ---------------- modports ----------------
 
     modport ThisStage(
     input
@@ -47,6 +51,7 @@ interface FetchStageIF( input logic clk, rst, rstStart );
         brPredTaken,
         brGlobalHistory,
         phtPrevValue,
+        activeThreadForICache,
     output
         fetchStageIsValid,
         fetchStagePC,
@@ -62,7 +67,9 @@ interface FetchStageIF( input logic clk, rst, rstStart );
         fetchStagePC,
         btbOut,
         btbHit,
-        brPredTaken
+        brPredTaken,
+    output
+        activeThreadForICache
     );
 
     modport NextStage(
@@ -70,10 +77,12 @@ interface FetchStageIF( input logic clk, rst, rstStart );
         nextStage
     );
 
+    // *** UPDATED: pass activeThreadForICache into ICache ***
     modport ICache(
     input
-        icRE, // Read Enable
+        icRE,               // Read Enable
         icReadAddrIn,
+        activeThreadForICache,
     output
         icReadHit,
         icReadDataOut

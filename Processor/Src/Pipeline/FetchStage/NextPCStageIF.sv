@@ -10,10 +10,11 @@ import BasicTypes::*;
 import PipelineTypes::*;
 import FetchUnitTypes::*;
 import MemoryMapTypes::*;
+import MicroArchConf::*;
 
 interface NextPCStageIF( input logic clk, rst, rstStart );
     
-    // PC
+    // PC (includes thread ID for SMT support)
     logic    pcWE;
     PC_Path  pcOut;
     PC_Path  pcIn;

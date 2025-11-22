@@ -95,6 +95,7 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
     DCacheLinePath dcReadData[LOAD_ISSUE_WIDTH];
     logic dcReadUncachable[LOAD_ISSUE_WIDTH];
     ActiveListIndexPath dcReadActiveListPtr[LOAD_ISSUE_WIDTH];
+    ThreadID dcReadTid[LOAD_ISSUE_WIDTH]; // Thread ID for each read port (SMT)
 
     // MSHRをAllocateした命令かどうか
     logic loadHasAllocatedMSHR[DCACHE_LSU_READ_PORT_NUM];
@@ -110,6 +111,7 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
     DCacheLinePath dcWriteData;
     DCacheByteEnablePath dcWriteByteWE;
     logic dcWriteUncachable;
+    ThreadID dcWriteTid; // Thread ID for write port (SMT)
 
     // MSHRからのLoad
     logic mshrAddrHit[LOAD_ISSUE_WIDTH];
@@ -144,6 +146,8 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
         dcReadAddr,
         dcReadUncachable,
         dcReadActiveListPtr,
+        dcReadTid,
+        dcWriteTid,
         makeMSHRCanBeInvalidDirect,
     output
         dcReadHit,
@@ -254,6 +258,7 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
         dcWriteAddr,
         dcWriteByteWE,
         dcWriteUncachable,
+        dcWriteTid,
         retiredStoreQueuePtr,
         releaseStoreQueueHead,
         busyInRecovery,
@@ -299,7 +304,8 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
         dcReadReq,
         dcReadAddr,
         dcReadUncachable,
-        dcReadActiveListPtr
+        dcReadActiveListPtr,
+        dcReadTid
     );
 
     modport MemoryTagAccessStage(

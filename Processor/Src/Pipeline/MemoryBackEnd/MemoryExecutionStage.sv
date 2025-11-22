@@ -137,6 +137,9 @@ module MemoryExecutionStage(
 
             // AL Ptr to release MSHR entry when allocator load is flushed.
             loadStoreUnit.dcReadActiveListPtr[i] = pipeReg[i].memQueueData.activeListPtr;
+            
+            // Thread ID for SMT cache support (TODO: thread this from earlier pipeline stages)
+            loadStoreUnit.dcReadTid[i] = '0;
 
         end
 

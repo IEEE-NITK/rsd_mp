@@ -1,0 +1,113 @@
+# TestSMT_RoundRobin_Full Testbench with Verilator
+
+ifndef RSD_VERILATOR_BIN
+VERILATOR_BIN = verilator
+else
+VERILATOR_BIN = $(RSD_VERILATOR_BIN)
+endif
+
+# This Makefile can be run from either Verification or Src directory
+# Auto-detect the directory and adjust paths accordingly
+
+# Check if Makefiles directory exists in current directory (means we're in Src)
+ifeq ($(wildcard Makefiles/CoreSources.inc.mk),)
+    # Running from Verification directory - Makefiles is in parent
+    SOURCE_ROOT  = ../
+    include ../Makefiles/CoreSources.inc.mk
+    TESTBENCH_PREFIX = 
+else
+    # Running from Src directory - Makefiles is in current directory
+    SOURCE_ROOT  = ./
+    include Makefiles/CoreSources.inc.mk
+    TESTBENCH_PREFIX = Verification/
+endif
+
+TOOLS_ROOT   = ../../Tools/
+PROJECT_WORK = ../../Project/Verilator
+LIBRARY_WORK_RTL = $(PROJECT_WORK)/obj_dir_smt_rr_full
+
+TOP_MODULE = TestSMT_RoundRobin_Full
+VERILATED_TOP_MODULE_NAME = V$(TOP_MODULE)
+
+# Filter out Xilinx-specific files that require SysDeps/XilinxMacros.vh
+# These are only needed for synthesis, not functional simulation
+XILINX_FILES = \
+	Main_Zynq_Wrapper.sv \
+	Main_Zynq.sv \
+	Memory/Axi4LiteControlRegisterIF.sv \
+	Memory/Axi4LiteControlRegister.sv \
+	Memory/Axi4Memory.sv \
+	Memory/Axi4MemoryIF.sv \
+	Memory/ControlQueue.sv \
+	Memory/MemoryReadReqQueue.sv \
+	Memory/MemoryWriteDataQueue.sv
+
+# MemoryTypes.sv includes XilinxMacros.vh but is needed for functional sim
+# We'll need to handle this by defining the macros or excluding it
+# For now, let's check if we can exclude it or need to provide stub macros
+
+FILTERED_MODULES = $(filter-out $(XILINX_FILES:%=$(SOURCE_ROOT)%),$(MODULES:%=$(SOURCE_ROOT)%))
+
+DEPS_RTL = \
+	$(TYPES:%=$(SOURCE_ROOT)%) \
+	$(FILTERED_MODULES) \
+	$(TESTBENCH_PREFIX)TestBenchClockGenerator.sv \
+	$(TESTBENCH_PREFIX)TestSMT_RoundRobin_Full.sv \
+
+# Temporally disabled warnings
+VERILATOR_DISABLED_WARNING = \
+     -Wno-WIDTH \
+     -Wno-INITIALDLY \
+     -Wno-UNOPTFLAT \
+	 -Wno-TIMESCALEMOD \
+
+# RSD specific constants
+# Note: Xilinx macros are provided by Verification/SysDeps/XilinxMacros.vh stub file
+RSD_VERILATOR_DEFINITION = \
+	+define+RSD_FUNCTIONAL_SIMULATION \
+	+define+RSD_FUNCTIONAL_SIMULATION_VERILATOR \
+	$(RSD_SRC_CFG) \
+
+# Verilator options
+VERILATOR_OPTION = \
+	--cc \
+	--binary \
+	--assert \
+	-sv \
+	--top-module $(TOP_MODULE) \
+	$(VERILATOR_DISABLED_WARNING) \
+	$(RSD_VERILATOR_DEFINITION) \
+	--Mdir $(LIBRARY_WORK_RTL) \
+	+incdir+$(SOURCE_ROOT) \
+	+incdir+$(TESTBENCH_PREFIX)Verification \
+	--trace \
+	--trace-structs \
+	-output-split 15000 \
+	-j 0 \
+
+VERILATOR_TARGET_CXXFLAGS = \
+	-D RSD_FUNCTIONAL_SIMULATION_VERILATOR \
+	-D RSD_FUNCTIONAL_SIMULATION \
+	-D RSD_VERILATOR_TRACE \
+	-D RSD_MARCH_FP_PIPE \
+	-Wno-attributes \
+
+all: $(LIBRARY_WORK_RTL) $(DEPS_RTL)
+	$(VERILATOR_BIN) $(VERILATOR_OPTION) $(DEPS_RTL)
+	cd $(LIBRARY_WORK_RTL); \
+		VPATH=../../../Src \
+		CXXFLAGS="$(VERILATOR_TARGET_CXXFLAGS)" \
+			$(MAKE) -f $(VERILATED_TOP_MODULE_NAME).mk
+	@echo "==== TestSMT_RoundRobin_Full Build Successful ===="
+
+run: all
+	$(LIBRARY_WORK_RTL)/$(VERILATED_TOP_MODULE_NAME)
+
+$(LIBRARY_WORK_RTL):
+	mkdir -p $(PROJECT_WORK)
+
+clean:
+	rm -rf $(LIBRARY_WORK_RTL)
+
+.PHONY: all run clean
+

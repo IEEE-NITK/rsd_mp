@@ -280,6 +280,7 @@ module StoreCommitter(
         port.dcWriteByteWE = dcWriteByteWE;
         port.dcWriteAddr = dcWriteAddr;
         port.dcWriteUncachable = dcWriteUncachable;
+        port.dcWriteTid = '0; // Thread ID for SMT cache support (TODO: thread from earlier stages)
     end
 
     // --- Tag stage

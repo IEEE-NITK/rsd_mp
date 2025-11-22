@@ -65,10 +65,13 @@ module InterruptController(
         csrUnit.interruptRetAddr = fetchStage.pcOut;
         csrUnit.interruptCode = interruptCode;
 
-        interruptTargetAddr = ToPC_FromAddr({
-            (csrReg.mtvec.mode == CSR_MTVEC_MODE_VECTORED) ? 
-                (csrReg.mtvec.base + interruptCode) : csrReg.mtvec.base, 
-            CSR_MTVEC_BASE_PADDING
+        interruptTargetAddr = ToPC_FromAddr(AddrPath'{
+            addr: {
+                (csrReg.mtvec.mode == CSR_MTVEC_MODE_VECTORED) ? 
+                    (csrReg.mtvec.base + interruptCode) : csrReg.mtvec.base, 
+                CSR_MTVEC_BASE_PADDING
+            },
+            tid: fetchStage.pcOut.tid
         });
 
         fetchStage.interruptAddrWE = triggerInterrupt;

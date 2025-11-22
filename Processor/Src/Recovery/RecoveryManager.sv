@@ -146,8 +146,8 @@ module RecoveryManager(
                 end
                 else if (regState.refetchType inside{REFETCH_TYPE_NEXT_PC, REFETCH_TYPE_STORE_NEXT_PC}) begin
                     recoveredPC = regState.exceptionDetectedInCommitStage ?
-                        ToPC_FromAddr(regState.recoveredPC_FromCommitStage) + INSN_BYTE_WIDTH : 
-                        ToPC_FromAddr(regState.recoveredPC_FromRwStage) + INSN_BYTE_WIDTH;
+                        PC_Path'{addr: ToPC_FromAddr(regState.recoveredPC_FromCommitStage).addr + INSN_BYTE_WIDTH, tid: regState.recoveredPC_FromCommitStage.tid} : 
+                        PC_Path'{addr: ToPC_FromAddr(regState.recoveredPC_FromRwStage).addr + INSN_BYTE_WIDTH, tid: regState.recoveredPC_FromRwStage.tid};
                 end
                 else begin // REFETCH_TYPE_BRANCH_TARGET
                     recoveredPC = regState.exceptionDetectedInCommitStage ?

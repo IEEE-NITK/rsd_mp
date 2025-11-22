@@ -926,6 +926,7 @@ module DCache(
     logic lsuCacheGrtReg[DCACHE_LSU_PORT_NUM];
     logic dcReadUncachableReg[DCACHE_LSU_READ_PORT_NUM];
     ActiveListIndexPath dcReadActiveListPtrReg[DCACHE_LSU_READ_PORT_NUM];
+    ThreadID dcReadTidReg[DCACHE_LSU_READ_PORT_NUM]; // Thread ID for each read port
 
     logic dcWriteReqReg;
     PhyAddrPath dcWriteAddrReg;
@@ -955,6 +956,7 @@ module DCache(
                 dcReadAddrRegDataStg[i] = '0;
                 dcReadUncachableReg[i] = '0;
                 dcReadActiveListPtrReg[i] = '0;
+                dcReadTidReg[i] = '0;
             end
             dcWriteAddrReg = '0;
             dcWriteUncachableReg = '0;
@@ -980,6 +982,7 @@ module DCache(
                 dcReadAddrRegTagStg[i] <= lsu.dcReadAddr[i];
                 dcReadUncachableReg[i] <= lsu.dcReadUncachable[i];
                 dcReadActiveListPtrReg[i] <= lsu.dcReadActiveListPtr[i];
+                dcReadTidReg[i] <= lsu.dcReadTid[i]; // Capture thread ID from LSU (TODO: ensure LSU provides tid)
             end
 
             dcReadAddrRegDataStg <= dcReadAddrRegTagStg;
@@ -1133,6 +1136,7 @@ module DCache(
     logic portInitMSHR[MSHR_NUM];
     PhyAddrPath portInitMSHR_Addr[MSHR_NUM];
     ActiveListIndexPath portInitMSHR_ActiveListPtr[MSHR_NUM];
+    ThreadID portInitMSHR_Tid[MSHR_NUM]; // Thread ID for MSHR entry (for SMT)
     logic portIsAllocatedByStore[MSHR_NUM];
     logic portIsUncachable[MSHR_NUM];
 
@@ -1178,6 +1182,7 @@ module DCache(
             portInitMSHR[i] = FALSE;
             portInitMSHR_Addr[i] = '0;
             portInitMSHR_ActiveListPtr[i] = '0;
+            portInitMSHR_Tid[i] = '0;
             portIsAllocatedByStore[i] = FALSE;
             portIsUncachable[i] = FALSE;
         end
@@ -1199,11 +1204,13 @@ module DCache(
                     if (i < DCACHE_LSU_READ_PORT_NUM) begin
                         lsuLoadHasAllocatedMSHR[i] = TRUE;
                         lsuLoadMSHRID[i] = m;
+                        portInitMSHR_Tid[m] = dcReadTidReg[i]; // Capture thread ID from read port
                     end
                     else begin
                         lsuStoreHasAllocatedMSHR[i-DCACHE_LSU_READ_PORT_NUM] = TRUE;
                         lsuStoreMSHRID[i-DCACHE_LSU_READ_PORT_NUM] = m;
                         portIsAllocatedByStore[m] = TRUE;
+                        portInitMSHR_Tid[m] = lsu.dcWriteTid; // Capture thread ID from write port (store)
                     end
                     break;
                 end
@@ -1214,6 +1221,7 @@ module DCache(
             port.initMSHR[i] = portInitMSHR[i];
             port.initMSHR_Addr[i] = portInitMSHR_Addr[i];
             port.initMSHR_ActiveListPtr[i] = portInitMSHR_ActiveListPtr[i];
+            port.initMSHR_Tid[i] = portInitMSHR_Tid[i];
             port.isAllocatedByStore[i] = portIsAllocatedByStore[i];
             port.isUncachable[i] = portIsUncachable[i];
         end
@@ -1466,6 +1474,7 @@ module DCacheMissHandler(
 
                         // Don't care
                         nextMSHR[i].flushIndex = '0;
+                        nextMSHR[i].tid = port.initMSHR_Tid[i]; // Set thread ID for MSHR entry (SMT)
 
                         // Dont'care
                         //nextMSHR[i].line = '0;

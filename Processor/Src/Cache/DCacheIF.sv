@@ -100,6 +100,7 @@ input
     logic initMSHR[MSHR_NUM];
     PhyAddrPath initMSHR_Addr[MSHR_NUM];
     ActiveListIndexPath initMSHR_ActiveListPtr[MSHR_NUM];
+    ThreadID initMSHR_Tid[MSHR_NUM]; // Thread ID for MSHR entry (for SMT)
 
     logic mshrValid[MSHR_NUM];
     PhyAddrPath mshrAddr[MSHR_NUM];
@@ -226,6 +227,7 @@ input
         initMSHR,
         initMSHR_Addr,
         initMSHR_ActiveListPtr,
+        initMSHR_Tid,
         mshrCacheGrt,
         mshrCacheMuxTagOut,
         mshrCacheMuxDataOut,
@@ -308,6 +310,7 @@ input
         initMSHR,
         initMSHR_Addr,
         initMSHR_ActiveListPtr,
+        initMSHR_Tid,
         isAllocatedByStore,
         isUncachable,
         mshrCanBeInvalidDirect,

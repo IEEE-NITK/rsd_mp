@@ -281,6 +281,7 @@ logic clk;
         .memReadDataReady( memReadDataReady ),
         .memReadData( memReadData ),
         .memReadSerial( memReadSerial ),
+        .memReadTid( '0 ), // Thread ID from memory (currently single-threaded memory path)
         .memAccessResponse( memAccessResponse ),
         .rstStart( rstStart ),
         .serialWE( serialWE ),

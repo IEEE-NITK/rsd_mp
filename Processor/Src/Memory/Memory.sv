@@ -25,108 +25,112 @@ memRead**には、読出結果が数サイクル遅れて出てくる。
 読出レイテンシは、以下の式で表される。
 BlockRAMのレイテンシ + パイプラインの深さ
 */
+
 module Memory #(
     parameter INIT_HEX_FILE = ""    // Memory initialization file path
 )(
 input
-    logic clk,
-    logic rst,
-    AddrPath memAccessAddr,
+    logic               clk,
+    logic               rst,
+    AddrPath            memAccessAddr,
     MemoryEntryDataPath memAccessWriteData,
-    logic memAccessRE,
-    logic memAccessWE,
+    logic               memAccessRE,
+    logic               memAccessWE,
+    ThreadID            memAccessTid,       // NEW: TID from MemoryAccessController
 output
-    logic memAccessBusy,    // メモリアクセス要求を受け付けられない
-    MemAccessSerial nextMemReadSerial, // RSDの次の読み出し要求に割り当てられるシリアル(id)
-    MemWriteSerial nextMemWriteSerial, // RSDの次の書き込み要求に割り当てられるシリアル(id)
-    logic memReadDataReady, // TRUEなら、メモリの読出しデータあり
-    MemoryEntryDataPath memReadData, // メモリの読出しデータ
-    MemAccessSerial memReadSerial, // メモリの読み出しデータのシリアル
-    MemAccessResponse memAccessResponse // メモリ書き込み完了通知
+    logic               memAccessBusy,      // メモリアクセス要求を受け付けられない
+    MemAccessSerial     nextMemReadSerial,  // 次の読み出し要求に割り当てられるシリアル(id)
+    MemWriteSerial      nextMemWriteSerial, // 次の書き込み要求に割り当てられるシリアル(id)
+    logic               memReadDataReady,   // TRUEなら、メモリの読出しデータあり
+    MemoryEntryDataPath memReadData,        // メモリの読出しデータ
+    MemAccessSerial     memReadSerial,      // メモリの読み出しデータのシリアル
+    ThreadID            memReadTid,         // NEW: 読み出しデータに対応するスレッドID
+    MemAccessResponse   memAccessResponse   // メモリ書き込み完了通知
 );
 
-    // メモリ読出
+    // メモリ読出パイプラインレジスタ
     typedef struct packed { // MemoryPipeReg
-        logic valid;
+        logic               valid;
         MemoryEntryDataPath data;
-        MemAccessSerial serial;
-        MemWriteSerial wserial;
-        logic wr;
+        MemAccessSerial     serial;
+        MemWriteSerial      wserial;
+        logic               wr;
+        ThreadID            tid;    // NEW: TID associated with this pipeline entry
     } MemoryPipeReg;
     
     MemoryPipeReg memPipeReg[ MEMORY_READ_PIPELINE_DEPTH ];
     MemoryPipeReg nextMemPipeReg; // 次サイクルでパイプラインに投入するデータ
 
-    MemAccessSerial nextNextMemReadSerial; // RSDの次の読み出し要求に割り当てられるシリアル(id)
-    MemWriteSerial nextNextMemWriteSerial; // RSDの次の書き込み要求に割り当てられるシリアル(id)
+    MemAccessSerial nextNextMemReadSerial;   // 次の読み出し要求シリアル(id)
+    MemWriteSerial  nextNextMemWriteSerial;  // 次の書き込み要求シリアル(id)
     
-    logic memReadAccessAck, prevMemReadAccessAck; // 読出要求を受け付けたかどうか
-    logic memWriteAccessAck, prevMemWriteAccessAck; // 読出要求を受け付けたかどうか
+    logic memReadAccessAck,  prevMemReadAccessAck;   // 読出要求を受け付けたかどうか
+    logic memWriteAccessAck, prevMemWriteAccessAck;  // 書込要求を受け付けたかどうか
     
     // AccessBusyである残りサイクル数をカウント
     MemoryProcessLatencyCount processLatencyCount, nextProcessLatencyCount;
     
     MemoryEntryDataPath ramReadData;
     
-    logic memoryWE;
-    AddrPath memoryWA;
+    logic               memoryWE;
+    AddrPath            memoryWA;
     MemoryEntryDataPath memoryWV;
-    AddrPath memoryRA;
+    AddrPath            memoryRA;
 
     // Body
     InitializedBlockRAM #( 
-        .ENTRY_NUM( MEMORY_ENTRY_NUM ),
+        .ENTRY_NUM    ( MEMORY_ENTRY_NUM ),
         .INIT_HEX_FILE( INIT_HEX_FILE ),
         .ENTRY_BIT_SIZE( MEMORY_ENTRY_BIT_NUM )
     ) body ( 
         .clk( clk ),
-        .we( memoryWE ),
-        .wa( memoryWA[ MEMORY_ADDR_MSB : MEMORY_ADDR_LSB ] ),
-        .wv( memoryWV ),
-        .ra( memoryRA[ MEMORY_ADDR_MSB : MEMORY_ADDR_LSB ] ),
-        .rv( ramReadData )
+        .we ( memoryWE ),
+        .wa ( memoryWA[ MEMORY_ADDR_MSB : MEMORY_ADDR_LSB ] ),
+        .wv ( memoryWV ),
+        .ra ( memoryRA[ MEMORY_ADDR_MSB : MEMORY_ADDR_LSB ] ),
+        .rv ( ramReadData )
     );
 
     // Push memory request temporarily to queue
-    logic pushRequestQueue;
+    logic                    pushRequestQueue;
     MemoryLatencySimRequestPath pushedData;
 
-    logic hasRequest, hasRequestReg;
+    logic                     hasRequest, hasRequestReg;
     MemoryLatencySimRequestPath requestData, requestDataReg;
 
     MemoryLatencySimulator memReqQueue(
-        .clk (clk),
-        .rst (rst),
-        .push (pushRequestQueue),
+        .clk        (clk),
+        .rst        (rst),
+        .push       (pushRequestQueue),
         .pushedData (pushedData),
         .hasRequest (hasRequest),
-        .requestData (requestData)
+        .requestData(requestData)
     );
     
     // ARCコンテストのDDR2コントローラに合わせ、
     // クロックの立ち下がりで動かす
     always_ff @( posedge clk ) begin
         if ( rst ) begin
-            processLatencyCount <= FALSE;
-            prevMemReadAccessAck <= FALSE;
+            processLatencyCount   <= FALSE;
+            prevMemReadAccessAck  <= FALSE;
             prevMemWriteAccessAck <= FALSE;
-            nextMemReadSerial <= '0;
-            nextMemWriteSerial <= '0;
-            requestDataReg <= '0;
-            hasRequestReg <= FALSE;
+            nextMemReadSerial     <= '0;
+            nextMemWriteSerial    <= '0;
+            requestDataReg        <= '0;
+            hasRequestReg         <= FALSE;
             
             for ( int i = 0; i < MEMORY_READ_PIPELINE_DEPTH; i++ ) begin
                 memPipeReg[i] <= '0;
             end
         end
         else begin
-            processLatencyCount <= nextProcessLatencyCount;
-            prevMemReadAccessAck <= memReadAccessAck;
+            processLatencyCount   <= nextProcessLatencyCount;
+            prevMemReadAccessAck  <= memReadAccessAck;
             prevMemWriteAccessAck <= memWriteAccessAck;
-            nextMemReadSerial <= nextNextMemReadSerial;
-            nextMemWriteSerial <= nextNextMemWriteSerial;
-            requestDataReg <= requestData;
-            hasRequestReg <= hasRequest;
+            nextMemReadSerial     <= nextNextMemReadSerial;
+            nextMemWriteSerial    <= nextNextMemWriteSerial;
+            requestDataReg        <= requestData;
+            hasRequestReg         <= hasRequest;
             
             memPipeReg[0] <= nextMemPipeReg;
             for ( int i = 0; i < MEMORY_READ_PIPELINE_DEPTH-1; i++ ) begin
@@ -168,50 +172,47 @@ output
         end
         
         // 読出要求が来て、Busyじゃなければ受け付ける
-        memReadAccessAck = ( memAccessRE && !memAccessBusy ) ? TRUE : FALSE;
+        memReadAccessAck  = ( memAccessRE && !memAccessBusy ) ? TRUE : FALSE;
 
         // 書込要求が来て、Busyじゃなければ受け付ける
         memWriteAccessAck = ( memAccessWE && !memAccessBusy ) ? TRUE : FALSE;
         
-        // 前のサイクルで読出要求を受け付けたら、読出結果をパイプラインに入力
-        
-        /* 修正前
-        nextMemPipeReg.valid = prevMemReadAccessAck;
-        nextMemPipeReg.data = ramReadData;
-        nextMemPipeReg.serial = nextMemReadSerial;
-        nextMemPipeReg.wserial = nextMemWriteSerial;
-        nextMemPipeReg.wr = prevMemWriteAccessAck;
-        */
-        nextMemPipeReg.valid = hasRequestReg ? requestDataReg.isRead : FALSE;
-        nextMemPipeReg.data = ramReadData;
+        // 前のサイクルでキューから取り出された requestDataReg に応じて
+        // 読出結果をパイプラインに入力
+        nextMemPipeReg.valid  = hasRequestReg ? requestDataReg.isRead : FALSE;
+        nextMemPipeReg.data   = ramReadData;
         nextMemPipeReg.serial = requestDataReg.nextMemReadSerial;
-        nextMemPipeReg.wserial = requestDataReg.nextMemWriteSerial;
-        nextMemPipeReg.wr = requestDataReg.wr;
+        nextMemPipeReg.wserial= requestDataReg.nextMemWriteSerial;
+        nextMemPipeReg.wr     = requestDataReg.wr;
+        nextMemPipeReg.tid    = requestDataReg.tid;   // NEW: TID をパイプラインに乗せる
 
-        pushRequestQueue = memReadAccessAck || memWriteAccessAck;
-        pushedData.isRead = memAccessRE;
-        pushedData.isWrite = memAccessWE;
-        pushedData.memAccessAddr = memAccessAddr;
-        pushedData.memAccessWriteData = memAccessWriteData;
-        pushedData.nextMemReadSerial = nextNextMemReadSerial;
-        pushedData.nextMemWriteSerial = nextNextMemWriteSerial;
-        pushedData.wr = memWriteAccessAck;
+        // リクエストキューへの push
+        pushRequestQueue                 = memReadAccessAck || memWriteAccessAck;
+        pushedData.isRead                = memAccessRE;
+        pushedData.isWrite               = memAccessWE;
+        pushedData.memAccessAddr         = memAccessAddr;
+        pushedData.memAccessWriteData    = memAccessWriteData;
+        pushedData.nextMemReadSerial     = nextNextMemReadSerial;
+        pushedData.nextMemWriteSerial    = nextNextMemWriteSerial;
+        pushedData.wr                    = memWriteAccessAck;
+        pushedData.tid                   = memAccessTid;  // NEW: キューに TID を保存
 
+        // 実際のメモリアクセス
         memoryWE = hasRequest ? requestData.isWrite : FALSE;
         memoryWA = requestData.memAccessAddr;
         memoryWV = requestData.memAccessWriteData;
         memoryRA = requestData.memAccessAddr;
-
     end
 
     // 出力ポート
     always_comb begin
-        memReadDataReady = memPipeReg[ MEMORY_READ_PIPELINE_DEPTH-1 ].valid;
-        memReadData = memPipeReg[ MEMORY_READ_PIPELINE_DEPTH-1 ].data;
-        memAccessBusy = ( processLatencyCount != 0 ? TRUE : FALSE );
-        memReadSerial = memPipeReg[ MEMORY_READ_PIPELINE_DEPTH-1 ].serial;
+        memReadDataReady        = memPipeReg[ MEMORY_READ_PIPELINE_DEPTH-1 ].valid;
+        memReadData             = memPipeReg[ MEMORY_READ_PIPELINE_DEPTH-1 ].data;
+        memReadSerial           = memPipeReg[ MEMORY_READ_PIPELINE_DEPTH-1 ].serial;
+        memReadTid              = memPipeReg[ MEMORY_READ_PIPELINE_DEPTH-1 ].tid;   // NEW: TID を出力
+        memAccessBusy           = ( processLatencyCount != 0 ? TRUE : FALSE );
         memAccessResponse.valid = memPipeReg[ MEMORY_WRITE_PROCESS_LATENCY-1 ].wr;
-        memAccessResponse.serial = memPipeReg[ MEMORY_WRITE_PROCESS_LATENCY-1 ].wserial;
+        memAccessResponse.serial= memPipeReg[ MEMORY_WRITE_PROCESS_LATENCY-1 ].wserial;
     end
 
     `RSD_ASSERT_CLK(
@@ -219,4 +220,5 @@ output
         !(memAccessRE && memAccessWE),
         "Cannot read and write the memory in the same cycle!"
     );
- endmodule
+
+endmodule

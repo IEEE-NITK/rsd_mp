@@ -1,0 +1,79 @@
+# TestPC_NextPC Testbench with Verilator
+
+ifndef RSD_VERILATOR_BIN
+VERILATOR_BIN = verilator
+else
+VERILATOR_BIN = $(RSD_VERILATOR_BIN)
+endif
+
+SOURCE_ROOT  = ./
+TOOLS_ROOT   = ../../Tools/
+PROJECT_WORK = ../../Project/Verilator
+LIBRARY_WORK_RTL = $(PROJECT_WORK)/obj_dir_pc_nextpc
+
+TOP_MODULE = TestPC_NextPC
+VERILATED_TOP_MODULE_NAME = V$(TOP_MODULE)
+
+# Include core source code definition
+include Makefiles/CoreSources.inc.mk
+
+DEPS_RTL = \
+	$(TYPES:%=$(SOURCE_ROOT)%) \
+	$(MODULES:%=$(SOURCE_ROOT)%) \
+	Verification/TestBenchClockGenerator.sv \
+	Verification/TestPC_NextPC.sv \
+
+# Temporally disabled warnings
+VERILATOR_DISABLED_WARNING = \
+     -Wno-WIDTH \
+     -Wno-INITIALDLY \
+     -Wno-UNOPTFLAT \
+	 -Wno-TIMESCALEMOD \
+
+# RSD specific constants
+RSD_VERILATOR_DEFINITION = \
+	+define+RSD_FUNCTIONAL_SIMULATION \
+	+define+RSD_FUNCTIONAL_SIMULATION_VERILATOR \
+	$(RSD_SRC_CFG) \
+
+# Verilator options
+VERILATOR_OPTION = \
+	--cc \
+	--binary \
+	--assert \
+	-sv \
+	--top-module $(TOP_MODULE) \
+	$(VERILATOR_DISABLED_WARNING) \
+	$(RSD_VERILATOR_DEFINITION) \
+	--Mdir $(LIBRARY_WORK_RTL) \
+	+incdir+. \
+	--trace \
+	--trace-structs \
+	-output-split 15000 \
+	-j 0 \
+
+VERILATOR_TARGET_CXXFLAGS = \
+	-D RSD_FUNCTIONAL_SIMULATION_VERILATOR \
+	-D RSD_FUNCTIONAL_SIMULATION \
+	-D RSD_VERILATOR_TRACE \
+	-D RSD_MARCH_FP_PIPE \
+	-Wno-attributes \
+
+all: $(LIBRARY_WORK_RTL) $(DEPS_RTL)
+	$(VERILATOR_BIN) $(VERILATOR_OPTION) $(DEPS_RTL)
+	cd $(LIBRARY_WORK_RTL); \
+		VPATH=../../../Src \
+		CXXFLAGS="$(VERILATOR_TARGET_CXXFLAGS)" \
+			$(MAKE) -f $(VERILATED_TOP_MODULE_NAME).mk
+	@echo "==== TestPC_NextPC Build Successful ===="
+
+run: all
+	$(LIBRARY_WORK_RTL)/$(VERILATED_TOP_MODULE_NAME)
+
+$(LIBRARY_WORK_RTL):
+	mkdir -p $(PROJECT_WORK)
+
+clean:
+	rm $(LIBRARY_WORK_RTL) -f -r
+
+.PHONY: all run clean

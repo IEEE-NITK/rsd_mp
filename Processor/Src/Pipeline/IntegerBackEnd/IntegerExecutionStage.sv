@@ -219,14 +219,17 @@ module IntegerExecutionStage(
             if( brTaken[i] ) begin
                 brResult[i].nextAddr =
                     ToPC_FromAddr(
-                        (iqData[i].opType == INT_MOP_TYPE_BR) ?  
-                            (pc[i] + ExtendBranchDisplacement(brSubInfo[i].brDisp) ) : // 方向分岐 
-                            (AddJALR_TargetOffset(fuOpA[i].data, brSubInfo[i].brDisp) // レジスタ間接分岐 
-                        ) 
+                        AddrPath'{
+                            addr: (iqData[i].opType == INT_MOP_TYPE_BR) ?  
+                                (pc[i].addr + ExtendBranchDisplacement(brSubInfo[i].brDisp) ) : // 方向分岐 
+                                (AddJALR_TargetOffset(fuOpA[i].data, brSubInfo[i].brDisp) // レジスタ間接分岐 
+                            ),
+                            tid: pc[i].tid
+                        }
                     );
             end
             else begin
-                brResult[i].nextAddr = ToPC_FromAddr(pc[i] + INSN_BYTE_WIDTH);
+                brResult[i].nextAddr = ToPC_FromAddr(AddrPath'{addr: pc[i].addr + INSN_BYTE_WIDTH, tid: pc[i].tid});
             end
             brResult[i].execTaken = brTaken[i];
             brResult[i].predTaken = bPred[i].predTaken;

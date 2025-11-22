@@ -145,11 +145,33 @@ module FetchStage(
 
     //
     // I-cache Access
+    // Only allow ICache access when the instruction belongs to the active thread
+    // This ensures serialization - only one thread accesses ICache at a time
+    // Exception: if FetchStage is stalled (waiting for ICache miss), allow access
+    // for the stalled thread even if NextPCStage has moved to another thread
     //
     AddrPath fetchAddrOut;
+    logic icacheAccessAllowed;
     always_comb begin
+        // Gate ICache access based on thread ownership
+        // If FetchStage is stalled, it's waiting for an ICache miss response,
+        // so allow access for the stalled thread regardless of activeThreadForICache
+        // Otherwise, only allow access for the active thread
+        if (stall && pipeReg[0].valid) begin
+            // FetchStage is stalled - allow ICache access for the stalled thread
+            // This handles the case where a thread is waiting for an ICache miss
+            icacheAccessAllowed = pipeReg[0].valid;
+        end
+        else begin
+            // Normal operation: only allow access when instruction belongs to active thread
+            // This ensures NextPCStage's round-robin selection is respected
+            icacheAccessAllowed = pipeReg[0].valid && 
+                                 (pipeReg[0].pc.tid == port.activeThreadForICache);
+        end
+        
         // --- I-cache read
-        port.icRE = pipeReg[0].valid; // read enable: whether check hit/miss
+        // Only enable ICache read when access is allowed
+        port.icRE = icacheAccessAllowed; // read enable: whether check hit/miss
         fetchAddrOut = ToAddrFromPC(pipeReg[0].pc);
         // Address for comparing tag
         port.icReadAddrIn = ToPhyAddrFromLogical(fetchAddrOut);

@@ -318,16 +318,18 @@ package CacheSystemTypes;
         DCacheLinePath data;
     } MemAccessReq;
 
+
     typedef struct packed {
         logic valid;
-
         PhyAddrPath addr;
+        ThreadID tid;
     } MemReadAccessReq;
 
     typedef struct packed {
         logic valid;
         MemAccessSerial serial;
         DCacheLinePath data;
+        ThreadID tid;
     } MemAccessResult;
 
     typedef struct packed {

@@ -32,7 +32,10 @@ localparam INSN_ADDR_BIT_WIDTH = $clog2(INSN_BYTE_WIDTH);
 localparam ADDR_WIDTH = 32;
 localparam ADDR_WIDTH_BIT_SIZE = $clog2(ADDR_WIDTH);
 localparam ADDR_BYTE_WIDTH = ADDR_WIDTH / BYTE_WIDTH;
-typedef logic [ADDR_WIDTH-1:0] AddrPath;
+typedef struct packed {
+    logic [ADDR_WIDTH-1:0] addr;
+    ThreadID tid;
+} AddrPath;
 
 // Data width
 localparam DATA_WIDTH = 32;
