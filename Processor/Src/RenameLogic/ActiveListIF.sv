@@ -27,15 +27,24 @@ interface ActiveListIF( input logic clk, rst );
     // Execution state is written to an entry corresponding to an pointer.
     ActiveListIndexPath pushedTailPtr [RENAME_WIDTH];
 
-    // Pop the head entry in an active list on commitment.
-    CommitLaneCountPath popHeadNum;
+    // Thread ID for each instruction being pushed to active list
+    ThreadID thread [RENAME_WIDTH];
 
-    // Pop the Tail entry in an active list on retire.
+    // Pop the head entry in an active list on commitment.
+`ifdef RSD_ENABLE_SMT
+    CommitLaneCountPath popHeadNum[THREAD_NUM];
+    CommitLaneCountPath popTailNum[THREAD_NUM];
+`else
+    CommitLaneCountPath popHeadNum;
     CommitLaneCountPath popTailNum;
+`endif
 
     // In RRMT recovery mode, readData become the front entries data in an active list.
     // Otherwise, readData become the tail entries data in an active list.
     ActiveListEntry readData[COMMIT_WIDTH];
+    
+    // Thread ID for each read entry (SMT support)
+    ThreadID readDataThread[COMMIT_WIDTH];
 
     // The front entries data in an active list.
     // This is used for commitment desicion.
@@ -88,6 +97,7 @@ interface ActiveListIF( input logic clk, rst );
         rst,
         pushTail,
         pushedTailData,
+        thread,
         popHeadNum,
         popTailNum,
         intWrite,
@@ -109,6 +119,7 @@ interface ActiveListIF( input logic clk, rst );
 `endif
         pushedTailPtr,
         readData,
+        readDataThread,
         headExecState,
         loadQueueRecoveryTailPtr,
         storeQueueRecoveryTailPtr,
@@ -129,7 +140,8 @@ interface ActiveListIF( input logic clk, rst );
         validEntryNum,
     output
         pushTail,
-        pushedTailData
+        pushedTailData,
+        thread
     );
 
     modport IntegerRegisterWriteStage(

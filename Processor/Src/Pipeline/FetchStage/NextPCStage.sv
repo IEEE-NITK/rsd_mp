@@ -235,7 +235,7 @@ module NextPCStage(
 `endif
             nextStage[i].pc = predNextPC + i * INSN_BYTE_WIDTH;
 `ifdef RSD_ENABLE_SMT
-            nextStage[i].thread = fetchThread;
+            nextStage[i].thread = port.currentThread;
 `endif
             if (port.interruptAddrWE || clear ||
                 StepOverCacheLine(predNextPC, nextStage[i].pc)) begin

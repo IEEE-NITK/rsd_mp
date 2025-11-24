@@ -48,6 +48,7 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
     // Release registers on retirement and recovery.
     logic releaseReg [ COMMIT_WIDTH ];
     PRegNumPath phyReleasedReg [ COMMIT_WIDTH ];
+    ThreadID releaseThread [ COMMIT_WIDTH ];  // Which thread is retiring each instruction
 
     // There are enough resources to rename.
     logic allocatable;
@@ -175,6 +176,7 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
     output
         releaseReg,
         phyReleasedReg,
+        releaseThread,
         flushNum
     );
 

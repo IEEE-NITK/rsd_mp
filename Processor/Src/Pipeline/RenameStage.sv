@@ -322,6 +322,12 @@ module RenameStage(
         end
         activeList.pushedTailData = alEntry;
 
+`ifdef RSD_ENABLE_SMT
+        for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
+            activeList.thread[i] = pipeReg[i].thread;
+        end
+`endif
+
         //
         // Issue queue allocation
         //

@@ -300,7 +300,9 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
         storeQueueEmpty,
     output
         allocateLoadQueue,
-        allocateStoreQueue
+        allocateStoreQueue,
+        allocateLoadQueueThread,
+        allocateStoreQueueThread
     );
 
     modport MemoryExecutionStage(

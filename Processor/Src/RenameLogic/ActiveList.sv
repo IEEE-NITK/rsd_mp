@@ -138,8 +138,8 @@ module ActiveList(
             end
         end
 
-        port.detectedFlushRangeTailPtr = tailPtr[currentThread] + pushNum[currentThread];
-        port.pushedTailPtr = pushedTailPtr[currentThread];
+        port.detectedFlushRangeTailPtr = tailPtr[port.thread[0]] + pushNum[port.thread[0]];
+        port.pushedTailPtr = pushedTailPtr[port.thread[0]];
 
         ctrl.activeListEmpty = (count[0] == 0) && (count[1] == 0);
 
@@ -208,6 +208,7 @@ module ActiveList(
     logic pushTail [RENAME_WIDTH];
     ActiveListEntry pushedTailData [RENAME_WIDTH];
     ActiveListEntry readData[COMMIT_WIDTH];
+    ThreadID readDataThreadTracking[THREAD_NUM][COMMIT_WIDTH];
 
     // Per-thread active list data arrays
     for (genvar t = 0; t < THREAD_NUM; t++) begin : activeListInstances
@@ -229,7 +230,15 @@ module ActiveList(
     always_comb begin
         pushTail = port.pushTail;
         pushedTailData = port.pushedTailData;
+        
+        // In SMT mode, we're reading from the currently committing thread
+        // For now, read from thread 0 (this will be refined later)
         port.readData = readData;
+        
+        // Track which thread each read entry belongs to
+        for (int i = 0; i < COMMIT_WIDTH; i++) begin
+            port.readDataThread[i] = 0;  // Will be updated based on active commit thread
+        end
     end
 
 `else

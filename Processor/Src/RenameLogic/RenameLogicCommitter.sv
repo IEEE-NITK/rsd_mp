@@ -74,6 +74,9 @@ module RenameLogicCommitter(
     {
         logic releaseReg;
         PRegNumPath phyReleasedReg;
+`ifdef RSD_ENABLE_SMT
+        ThreadID thread;
+`endif
     } ReleasedRegister;
     ReleasedRegister regReleasedReg[COMMIT_WIDTH];
     ReleasedRegister nextReleasedReg[COMMIT_WIDTH];
@@ -93,6 +96,9 @@ module RenameLogicCommitter(
         for (int i = 0; i < COMMIT_WIDTH; i++) begin
             port.releaseReg[i] = regReleasedReg[i].releaseReg;
             port.phyReleasedReg[i] = regReleasedReg[i].phyReleasedReg;
+`ifdef RSD_ENABLE_SMT
+            port.releaseThread[i] = regReleasedReg[i].thread;
+`endif
         end
     end
 
@@ -113,6 +119,20 @@ module RenameLogicCommitter(
         //  a rename logic.
         if(phase == PHASE_COMMIT) begin
             // Commit mode.
+`ifdef RSD_ENABLE_SMT
+            for (int t = 0; t < THREAD_NUM; t++) begin
+                activeList.popTailNum[t] = 0;
+                if ( port.commit ) begin
+                    // For now, broadcast to the thread that's retiring (from readDataThread)
+                    // This will be refined to track which thread is active
+                    activeList.popHeadNum[t] = 0;
+                end
+                else begin
+                    activeList.popHeadNum[t] = 0;
+                end
+            end
+            // TODO: Set popHeadNum based on activeThread tracking
+`else
             activeList.popTailNum = 0;
 
             // Pop the head entries of the active list and release registers
@@ -123,6 +143,7 @@ module RenameLogicCommitter(
             else begin
                 activeList.popHeadNum = 0;
             end
+`endif
 
             for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
                 if( port.commit && i < port.commitNum) begin
@@ -138,14 +159,24 @@ module RenameLogicCommitter(
 
                 // Released registers are set from the head entry of the active list.
                 nextReleasedReg[i].phyReleasedReg = alReadData[i].phyPrevDstRegNum;
+`ifdef RSD_ENABLE_SMT
+                nextReleasedReg[i].thread = activeList.readDataThread[i];
+`endif
             end
 
             recovery.inRecoveryAL = FALSE;
             flushNum = '0;
         end
         else if(phase == PHASE_RECOVER_0) begin
+`ifdef RSD_ENABLE_SMT
+            for (int t = 0; t < THREAD_NUM; t++) begin
+                activeList.popHeadNum[t] = 0;
+                activeList.popTailNum[t] = 0;
+            end
+`else
             activeList.popHeadNum = 0;
             activeList.popTailNum = 0;
+`endif
             for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
                 nextReleasedReg[i].releaseReg = FALSE;
                 nextReleasedReg[i].phyReleasedReg = 0;
@@ -161,8 +192,15 @@ module RenameLogicCommitter(
                     releaseNum = recoveryCount;
                 end
                 flushNum = releaseNum;
+`ifdef RSD_ENABLE_SMT
+                for (int t = 0; t < THREAD_NUM; t++) begin
+                    activeList.popHeadNum[t] = releaseNum;
+                    activeList.popTailNum[t] = 0;
+                end
+`else
                 activeList.popHeadNum = releaseNum;
                 activeList.popTailNum = 0;
+`endif
 
                 for (int i = 0; i < COMMIT_WIDTH; i++) begin
                     if (i < releaseNum) begin
@@ -178,6 +216,9 @@ module RenameLogicCommitter(
 
                     // Released registers are set from the head entry of the active list.
                     nextReleasedReg[i].phyReleasedReg = alReadData[i].phyDstRegNum;
+`ifdef RSD_ENABLE_SMT
+                    nextReleasedReg[i].thread = activeList.readDataThread[i];
+`endif
                 end
 
                 recovery.inRecoveryAL = TRUE;
@@ -187,8 +228,15 @@ module RenameLogicCommitter(
                     releaseNum = recoveryCount;
                 end
                 flushNum = releaseNum;
+`ifdef RSD_ENABLE_SMT
+                for (int t = 0; t < THREAD_NUM; t++) begin
+                    activeList.popHeadNum[t] = 0;
+                    activeList.popTailNum[t] = releaseNum;
+                end
+`else
                 activeList.popHeadNum = 0;
                 activeList.popTailNum = releaseNum;
+`endif
 
                 for (int i = 0; i < COMMIT_WIDTH; i++) begin
                     if ( (i < releaseNum)) begin
@@ -204,6 +252,9 @@ module RenameLogicCommitter(
 
                     // Released registers are set from the tail entry of the active list.
                     nextReleasedReg[i].phyReleasedReg = alReadData[i].phyDstRegNum;
+`ifdef RSD_ENABLE_SMT
+                    nextReleasedReg[i].thread = activeList.readDataThread[i];
+`endif
                 end
 
                 recovery.inRecoveryAL = TRUE;
