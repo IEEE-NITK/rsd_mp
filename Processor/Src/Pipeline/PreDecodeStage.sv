@@ -91,6 +91,10 @@ module PreDecodeStage(
             nextStage[i].insnInfo = insnInfo[i];
             nextStage[i].microOps = microOps[i];
 
+`ifdef RSD_ENABLE_SMT
+            nextStage[i].thread = pipeReg[i].thread;
+`endif
+
             if (pipeReg[i].valid)
                 empty = FALSE;
 

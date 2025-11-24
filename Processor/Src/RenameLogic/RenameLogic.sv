@@ -21,6 +21,70 @@ module RenameLogic (
     logic allocatePhyReg [ RENAME_WIDTH ];
     PRegNumPath allocatedPhyRegNum [ RENAME_WIDTH ];
 
+`ifdef RSD_ENABLE_SMT
+    // Per-thread free list allocation/release signals
+    logic allocatePhyScalarReg [ THREAD_NUM ][ RENAME_WIDTH ];
+    PScalarRegNumPath allocatedPhyScalarRegNum [ THREAD_NUM ][ RENAME_WIDTH ];
+    logic releasePhyScalarReg [ THREAD_NUM ][ COMMIT_WIDTH ];
+    PScalarRegNumPath releasedPhyScalarRegNum [ THREAD_NUM ][ COMMIT_WIDTH ];
+    ScalarFreeListCountPath scalarFreeListCount [ THREAD_NUM ];
+
+`ifdef RSD_MARCH_FP_PIPE
+    logic allocatePhyScalarFPReg [ THREAD_NUM ][ RENAME_WIDTH ];
+    PScalarFPRegNumPath allocatedPhyScalarFPRegNum [ THREAD_NUM ][ RENAME_WIDTH ];
+    logic releasePhyScalarFPReg [ THREAD_NUM ][ COMMIT_WIDTH ];
+    PScalarFPRegNumPath releasedPhyScalarFPRegNum [ THREAD_NUM ][ COMMIT_WIDTH ];
+    ScalarFPFreeListCountPath scalarFPFreeListCount [ THREAD_NUM ];
+`endif
+
+    // Per-thread free list instances
+    for (genvar t = 0; t < THREAD_NUM; t++) begin : scalarFreeListInstances
+        MultiWidthFreeList #(
+            .SIZE( SCALAR_FREE_LIST_ENTRY_NUM ),
+            .ENTRY_BIT_SIZE( PSCALAR_NUM_BIT_WIDTH ),
+            .PUSH_WIDTH( COMMIT_WIDTH ),
+            .POP_WIDTH( RENAME_WIDTH ),
+            .INITIAL_LENGTH( SCALAR_FREE_LIST_ENTRY_NUM )
+        ) scalarFreeList (
+            .clk( port.clk ),
+            .rst( port.rst ),
+            .rstStart( port.rstStart ),
+            .count( scalarFreeListCount[t] ),
+
+            .pop( allocatePhyScalarReg[t] ),
+            .poppedData( allocatedPhyScalarRegNum[t] ),
+
+            .push( releasePhyScalarReg[t] ),
+            .pushedData( releasedPhyScalarRegNum[t] )
+        );
+    end
+
+`ifdef RSD_MARCH_FP_PIPE
+    // Per-thread FP free list instances
+    for (genvar t = 0; t < THREAD_NUM; t++) begin : scalarFPFreeListInstances
+        MultiWidthFreeList #(
+            .SIZE( SCALAR_FP_FREE_LIST_ENTRY_NUM ),
+            .ENTRY_BIT_SIZE( PSCALAR_FP_NUM_BIT_WIDTH ),
+            .PUSH_WIDTH( COMMIT_WIDTH ),
+            .POP_WIDTH( RENAME_WIDTH ),
+            .INITIAL_LENGTH( SCALAR_FP_FREE_LIST_ENTRY_NUM )
+        ) scalarFPFreeList (
+            .clk( port.clk ),
+            .rst( port.rst ),
+            .rstStart( port.rstStart ),
+            .count( scalarFPFreeListCount[t] ),
+
+            .pop( allocatePhyScalarFPReg[t] ),
+            .poppedData( allocatedPhyScalarFPRegNum[t] ),
+
+            .push( releasePhyScalarFPReg[t] ),
+            .pushedData( releasedPhyScalarFPRegNum[t] )
+        );
+    end
+`endif
+
+`else
+    // Single-threaded free lists (original code)
     logic allocatePhyScalarReg [ RENAME_WIDTH ];
     PScalarRegNumPath allocatedPhyScalarRegNum [ RENAME_WIDTH ];
     logic releasePhyScalarReg [ COMMIT_WIDTH ];
@@ -35,11 +99,6 @@ module RenameLogic (
     ScalarFPFreeListCountPath scalarFPFreeListCount;
 `endif
 
-    ActiveListEntry alReadData [ COMMIT_WIDTH ];
-
-    //
-    // --- Free lists for registers.
-    //
     MultiWidthFreeList #(
         .SIZE( SCALAR_FREE_LIST_ENTRY_NUM ),
         .ENTRY_BIT_SIZE( PSCALAR_NUM_BIT_WIDTH ),
@@ -79,6 +138,10 @@ module RenameLogic (
         .pushedData( releasedPhyScalarFPRegNum )
     );
 `endif
+
+`endif
+
+    ActiveListEntry alReadData [ COMMIT_WIDTH ];
 
     // Index address for recoverying the RMT by copying from the retirement RMT.
     LRegNumPath rmtRecoveryIndex;
@@ -136,13 +199,25 @@ module RenameLogic (
 
         // Destinations.
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
-`ifdef RSD_MARCH_FP_PIPE
+        `ifdef RSD_ENABLE_SMT
+            // For SMT, select from correct thread's allocated registers
+        `ifdef RSD_MARCH_FP_PIPE
+            allocatedPhyRegNum[i].isFP = port.logDstReg[i].isFP;
+            allocatedPhyRegNum[i].regNum =
+                (port.logDstReg[i].isFP ? allocatedPhyScalarFPRegNum[port.thread[i]][i] : allocatedPhyScalarRegNum[port.thread[i]][i]);
+        `else
+            allocatedPhyRegNum[i].regNum = allocatedPhyScalarRegNum[port.thread[i]][i];
+        `endif
+        `else
+            // Single-threaded version (original)
+        `ifdef RSD_MARCH_FP_PIPE
             allocatedPhyRegNum[i].isFP = port.logDstReg[i].isFP;
             allocatedPhyRegNum[i].regNum =
                 (port.logDstReg[i].isFP ? allocatedPhyScalarFPRegNum[i] : allocatedPhyScalarRegNum[i]);
-`else
+        `else
             allocatedPhyRegNum[i].regNum = allocatedPhyScalarRegNum[i];
-`endif
+        `endif
+        `endif
         end
 
         port.phyDstReg = allocatedPhyRegNum;
@@ -153,6 +228,20 @@ module RenameLogic (
         alReadData = activeList.readData;   //for RECOVERY_FROM_ACTIVE_LIST mode
 
         // Empty flag.
+        `ifdef RSD_ENABLE_SMT
+        // For SMT, check the current thread's free lists
+        `ifdef RSD_MARCH_FP_PIPE
+        port.allocatable =
+            !inRecoveryRMT &&   // In a recovery mode, the front-end is stalled.
+            (scalarFreeListCount[port.thread[0]] >= RENAME_WIDTH) &&
+            (scalarFPFreeListCount[port.thread[0]] >= RENAME_WIDTH);
+        `else
+        port.allocatable =
+            !inRecoveryRMT &&   // In a recovery mode, the front-end is stalled.
+            (scalarFreeListCount[port.thread[0]] >= RENAME_WIDTH);
+        `endif
+`else
+        // Single-threaded version (original)
 `ifdef RSD_MARCH_FP_PIPE
         port.allocatable =
             !inRecoveryRMT &&   // In a recovery mode, the front-end is stalled.
@@ -163,21 +252,48 @@ module RenameLogic (
             !inRecoveryRMT &&   // In a recovery mode, the front-end is stalled.
             (scalarFreeListCount >= RENAME_WIDTH);
 `endif
+`endif
 
         // Allocation from the free lists.
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
             allocatePhyReg[i] = port.updateRMT[i] && port.writeReg[i];
 
+        `ifdef RSD_ENABLE_SMT
+            // For SMT, dispatch to correct thread's free list
+        `ifdef RSD_MARCH_FP_PIPE
+            allocatePhyScalarReg[port.thread[i]][i] = allocatePhyReg[i] && !port.logDstReg[i].isFP;
+            allocatePhyScalarFPReg[port.thread[i]][i] = allocatePhyReg[i] && port.logDstReg[i].isFP;
+        `else
+            allocatePhyScalarReg[port.thread[i]][i] = allocatePhyReg[i];
+        `endif
+`else
+            // Single-threaded version (original)
 `ifdef RSD_MARCH_FP_PIPE
             allocatePhyScalarReg[i] = allocatePhyReg[i] && !port.logDstReg[i].isFP;
             allocatePhyScalarFPReg[i] = allocatePhyReg[i] && port.logDstReg[i].isFP;
 `else
             allocatePhyScalarReg[i] = allocatePhyReg[i];
 `endif
+`endif
         end
 
         // Release to the free lists.
         for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
+`ifdef RSD_ENABLE_SMT
+            // For SMT, dispatch to correct thread's free list
+            ThreadID instrThread = port.releaseThread[i];
+`ifdef RSD_MARCH_FP_PIPE
+            releasePhyScalarReg[instrThread][i] =
+                port.releaseReg[i] && !port.phyReleasedReg[i].isFP;
+            releasePhyScalarFPReg[instrThread][i] =
+                port.releaseReg[i] && port.phyReleasedReg[i].isFP;
+            releasedPhyScalarFPRegNum[instrThread][i] = port.phyReleasedReg[i].regNum;
+`else
+            releasePhyScalarReg[instrThread][i] = port.releaseReg[i];
+`endif
+            releasedPhyScalarRegNum[instrThread][i] = port.phyReleasedReg[i].regNum;
+`else
+            // Single-threaded version (original)
 `ifdef RSD_MARCH_FP_PIPE
             releasePhyScalarReg[i] =
                 port.releaseReg[i] && !port.phyReleasedReg[i].isFP;
@@ -188,6 +304,7 @@ module RenameLogic (
             releasePhyScalarReg[i] = port.releaseReg[i];
 `endif
             releasedPhyScalarRegNum[i] = port.phyReleasedReg[i].regNum;
+`endif
         end
 
         // Write control of RMTs.

@@ -5,6 +5,7 @@
 # * RSD_MARCH_UNIFIED_LDST_MEM_PIPE:  Use unified LS/ST pipeline
 # * RSD_MARCH_INT_ISSUE_WIDTH=N: Set issue width to N
 # * RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE: Integrate mul/div to a memory pipe
+# * RSD_ENABLE_SMT: Enable Simultaneous Multithreading
 RSD_SRC_CFG = \
 	+define+RSD_MARCH_INT_ISSUE_WIDTH=2 \
 	+define+RSD_MARCH_FP_PIPE \
@@ -13,6 +14,7 @@ RSD_SRC_CFG = \
 
 #	+define+RSD_MARCH_UNIFIED_LDST_MEM_PIPE \
 #	+define+RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE \
+#	+define+RSD_ENABLE_SMT \
 
 
 # TYPES specifies files that include packages that contain type definitions.

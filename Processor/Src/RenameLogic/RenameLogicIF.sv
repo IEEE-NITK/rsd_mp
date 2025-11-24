@@ -14,6 +14,11 @@ import ActiveListIndexTypes::*;
 
 interface RenameLogicIF( input logic clk, rst, rstStart );
 
+    // Thread ID for per-thread rename logic
+`ifdef RSD_ENABLE_SMT
+    ThreadID thread [ RENAME_WIDTH ];
+`endif
+
     // Logical register numbers.
     LRegNumPath logSrcRegA [ RENAME_WIDTH ];
     LRegNumPath logSrcRegB [ RENAME_WIDTH ];
@@ -96,6 +101,9 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         logDstReg,
         watWriteRegFromPipeReg,
         watWriteIssueQueuePtrFromPipeReg,
+`ifdef RSD_ENABLE_SMT
+        thread,
+`endif
     output
         allocatable,
         phyDstReg,
@@ -140,6 +148,9 @@ interface RenameLogicIF( input logic clk, rst, rstStart );
         writeReg,
         watWriteRegFromPipeReg,
         watWriteIssueQueuePtrFromPipeReg
+`ifdef RSD_ENABLE_SMT
+        ,thread
+`endif
     );
 
     modport CommitStage(

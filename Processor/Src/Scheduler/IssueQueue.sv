@@ -20,8 +20,52 @@ module IssueQueue (
     DebugIF.IssueQueue debug
 );
 
+`ifdef RSD_ENABLE_SMT
     //
-    // Issue queue allocator
+    // Per-thread Issue queue allocator
+    //
+
+    logic releaseEntry [ THREAD_NUM ][ ISSUE_WIDTH + ISSUE_QUEUE_RETURN_INDEX_WIDTH ];
+    IssueQueueIndexPath releasePtr [ THREAD_NUM ][ ISSUE_WIDTH + ISSUE_QUEUE_RETURN_INDEX_WIDTH ];
+    IssueQueueCountPath freeListCount [ THREAD_NUM ];
+    logic freeListReset [ THREAD_NUM ];
+    logic [ ISSUE_QUEUE_RESET_CYCLE_BIT_SIZE-1 : 0 ] freeListResetCycleCount [ THREAD_NUM ];
+
+    ActiveListIndexPath alPtrReg [ THREAD_NUM ][ ISSUE_QUEUE_ENTRY_NUM ];
+    logic [ ISSUE_QUEUE_ENTRY_NUM-1:0 ] flush [ THREAD_NUM ];
+    logic [ ISSUE_QUEUE_ENTRY_NUM-1:0 ] prevFlushAtRecovery [ THREAD_NUM ];
+    logic issueQueueReturnIndex [ THREAD_NUM ];
+    logic [ ISSUE_QUEUE_RETURN_INDEX_CYCLE_BIT_SIZE-1:0 ] issueQueueReturnIndexCycleCount [ THREAD_NUM ];
+    IssueQueueIndexPath returnIndexOffset [ THREAD_NUM ];
+
+    IssueQueueIndexPath writePtr[ DISPATCH_WIDTH ];
+    IssueQueueIndexPath selectedPtr [ ISSUE_WIDTH ];
+
+    // Per-thread free lists
+    for (genvar t = 0; t < THREAD_NUM; t++) begin : issueQueueFreeListInstances
+        MultiWidthFreeList #(
+            .SIZE( ISSUE_QUEUE_ENTRY_NUM ),
+            .ENTRY_BIT_SIZE( ISSUE_QUEUE_ENTRY_NUM_BIT_WIDTH ),
+            .PUSH_WIDTH( ISSUE_WIDTH + ISSUE_QUEUE_RETURN_INDEX_WIDTH ),
+            .POP_WIDTH( RENAME_WIDTH ),
+            .INITIAL_LENGTH (ISSUE_QUEUE_ENTRY_NUM)
+        ) issueQueueFreeList (
+                .clk( port.clk ),
+                .rst( port.rst || freeListReset[t] ),
+                .rstStart( port.rstStart ),
+                .count( freeListCount[t] ),
+
+                .pop( port.allocate ),
+                .poppedData( port.allocatedPtr ),
+
+                .push( releaseEntry[t] ),
+                .pushedData( releasePtr[t] )
+            );
+    end
+
+`else
+    //
+    // Issue queue allocator (Single-threaded)
     //
 
     // A free list for an issue queue entries.
@@ -63,10 +107,41 @@ module IssueQueue (
             .pushedData( releasePtr )
         );
 
+`endif
+
     always_comb begin
         // Allocate
-        // freeListReset がアサートされているリセット中に，
-        // 新しくエントリを確保させるとキューがこわれるのでブロックする
+`ifdef RSD_ENABLE_SMT
+        // For SMT, check all threads' free lists
+        logic anyThreadAllocatable = FALSE;
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            if (!freeListReset[t] && freeListCount[t] >= RENAME_WIDTH) begin
+                anyThreadAllocatable = TRUE;
+            end
+        end
+        port.allocatable = anyThreadAllocatable;
+
+        // Release - dispatch to thread's free list based on writeData thread
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            for ( int i = 0; i < ISSUE_WIDTH; i++ ) begin
+                releasePtr[t][i] = wakeupSelect.releasePtr[i];
+                releaseEntry[t][i] = wakeupSelect.releaseEntry[i];
+            end
+            for ( int i = 0; i < ISSUE_QUEUE_RETURN_INDEX_WIDTH; i++ ) begin
+                if ( issueQueueReturnIndex[t] && prevFlushAtRecovery[t][returnIndexOffset[t]+i] ) begin
+                    releaseEntry[t][ ISSUE_WIDTH + i ] = TRUE;
+                    releasePtr[t][ ISSUE_WIDTH + i ] = returnIndexOffset[t] + i;
+                end
+                else begin
+                    releaseEntry[t][ ISSUE_WIDTH + i ] = FALSE;
+                    //Don't care
+                    releasePtr[t][ ISSUE_WIDTH + i ] = returnIndexOffset[t] + i;
+                end
+            end
+        end
+
+`else
+        // Single-threaded version (original)
         port.allocatable = (!freeListReset && freeListCount >= RENAME_WIDTH) ? TRUE : FALSE;
 
         // Release
@@ -85,10 +160,35 @@ module IssueQueue (
                 releasePtr[ ISSUE_WIDTH + i ] = returnIndexOffset + i;
             end
         end
+`endif
     end
 
     // Reset(when recovery at commit occurs)
     always_ff @( posedge port.clk ) begin
+`ifdef RSD_ENABLE_SMT
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            if ( port.rst ) begin
+                freeListReset[t] <= FALSE;
+                freeListResetCycleCount[t] <= 0;
+            end
+            else if ( recovery.toRecoveryPhase && !recovery.recoveryFromRwStage) begin
+                // Start of reset sequence
+                freeListReset[t] <= TRUE;
+                freeListResetCycleCount[t] <= 0;
+            end
+            else if ( freeListResetCycleCount[t] == ISSUE_QUEUE_RESET_CYCLE - 1 ) begin
+                // End of reset sequence
+                freeListReset[t] <= FALSE;
+                freeListResetCycleCount[t] <= 0;
+            end
+            else begin
+                freeListReset[t] <= freeListReset[t];
+                freeListResetCycleCount[t] <= freeListResetCycleCount[t] + 1;
+            end
+        end
+
+`else
+        // Single-threaded version (original)
         if ( port.rst ) begin
             freeListReset <= FALSE;
             freeListResetCycleCount <= 0;
@@ -107,6 +207,7 @@ module IssueQueue (
             freeListReset <= freeListReset;
             freeListResetCycleCount <= freeListResetCycleCount + 1;
         end
+`endif
     end
 
 
@@ -224,18 +325,37 @@ module IssueQueue (
 
     //alPtrRegにIssueQueueの各エントリのActiveListPtrを複製しておく
     always_ff @( posedge port.clk ) begin
+`ifdef RSD_ENABLE_SMT
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            for ( int i = 0; i < DISPATCH_WIDTH; i++ ) begin
+                if ( port.write[i] ) begin
+                    alPtrReg[t][ writePtr[i] ] <= port.writeAL_Ptr[i];
+                end
+            end
+        end
+`else
+        // Single-threaded version (original)
         for ( int i = 0; i < DISPATCH_WIDTH; i++ ) begin
             if ( port.write[i] ) begin
                 alPtrReg[ writePtr[i] ] <= port.writeAL_Ptr[i];
             end
         end
+`endif
     end
 
     //WakeupPipelineRegisterにおいてフラッシュされた命令が後続にブロードキャストされないための判定に使う
     always_comb begin
+`ifdef RSD_ENABLE_SMT
+        // For SMT, use thread 0's alPtrReg (they're all the same in single-threaded test)
+        for ( int i = 0; i < ISSUE_WIDTH; i++ ) begin
+            recovery.selectedActiveListPtr[i] = alPtrReg[0][ selectedPtr[i] ];
+        end
+`else
+        // Single-threaded version (original)
         for ( int i = 0; i < ISSUE_WIDTH; i++ ) begin
             recovery.selectedActiveListPtr[i] = alPtrReg[ selectedPtr[i] ];
         end
+`endif
     end
 
     //synopsysの合成においてインターフェースの配列を直接使うのが怪しいので一度変数に落とす

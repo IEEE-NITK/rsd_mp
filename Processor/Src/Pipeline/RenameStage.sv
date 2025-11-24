@@ -241,6 +241,10 @@ module RenameStage(
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
             renameLogic.updateRMT[i] = update[i];
 
+`ifdef RSD_ENABLE_SMT
+            renameLogic.thread[i] = pipeReg[i].thread;
+`endif
+
             // Logical register numbers
             renameLogic.logSrcRegA[i] = isBranch[i] ? opInfo[i].operand.brOp.srcRegNumA : opInfo[i].operand.intOp.srcRegNumA;
             renameLogic.logSrcRegB[i] = isBranch[i] ? opInfo[i].operand.brOp.srcRegNumB : opInfo[i].operand.intOp.srcRegNumB;
@@ -334,6 +338,11 @@ module RenameStage(
             loadStoreUnit.allocateLoadQueue[i] = update[i] && isLoad[i];
             loadStoreUnit.allocateStoreQueue[i] = update[i] && isStore[i];
 
+`ifdef RSD_ENABLE_SMT
+            loadStoreUnit.allocateLoadQueueThread[i] = pipeReg[i].thread;
+            loadStoreUnit.allocateStoreQueueThread[i] = pipeReg[i].thread;
+`endif
+
             nextStage[i].loadQueuePtr = loadStoreUnit.allocatedLoadQueuePtr[i];
             nextStage[i].storeQueuePtr = loadStoreUnit.allocatedStoreQueuePtr[i];
         end
@@ -362,6 +371,10 @@ module RenameStage(
             nextStage[i].pc = pipeReg[i].pc;
             nextStage[i].brPred = pipeReg[i].bPred;
             nextStage[i].opInfo = opInfo[i];
+
+`ifdef RSD_ENABLE_SMT
+            nextStage[i].thread = pipeReg[i].thread;
+`endif
 
             // 以下のLSQのポインタはLSQのリカバリに用いる
             nextStage[i].loadQueueRecoveryPtr = loadStoreUnit.allocatedLoadQueuePtr[i];

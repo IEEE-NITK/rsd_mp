@@ -38,6 +38,32 @@ module RMT( RenameLogicIF.RMT port );
         IssueQueueIndexPath regIssueQueuePtr;
     } RMT_Entry;
     
+`ifdef RSD_ENABLE_SMT
+    // Per-thread RMT arrays
+    logic rmtWE [ THREAD_NUM ][ COMMIT_WIDTH ];
+    LRegNumPath rmtWA[ THREAD_NUM ][ COMMIT_WIDTH ];
+    RMT_Entry rmtWV[ THREAD_NUM ][ COMMIT_WIDTH ];
+    LRegNumPath rmtRA[ THREAD_NUM ][ RMT_REG_OPERAND_NUM * RENAME_WIDTH ];
+    RMT_Entry rmtRV[ THREAD_NUM ][ RMT_REG_OPERAND_NUM * RENAME_WIDTH ];
+
+    // Per-thread RMT instances
+    for (genvar t = 0; t < THREAD_NUM; t++) begin : rmtInstances
+        DistributedMultiPortRAM #(
+            .ENTRY_NUM( LREG_NUM ),
+            .ENTRY_BIT_SIZE( $bits(RMT_Entry) ),
+            .READ_NUM( RMT_REG_OPERAND_NUM * RENAME_WIDTH ),
+            .WRITE_NUM( COMMIT_WIDTH )
+        ) regRMT (
+            .clk( port.clk ),
+            .we( rmtWE[t] ),
+            .wa( rmtWA[t] ),
+            .wv( rmtWV[t] ),
+            .ra( rmtRA[t] ),
+            .rv( rmtRV[t] )
+        );
+    end
+`else
+    // Single-threaded RMT
     logic rmtWE [ COMMIT_WIDTH ];
     LRegNumPath rmtWA[ COMMIT_WIDTH ];
     RMT_Entry rmtWV[ COMMIT_WIDTH ];
@@ -57,12 +83,107 @@ module RMT( RenameLogicIF.RMT port );
         .ra( rmtRA ),
         .rv( rmtRV )
     );
+`endif
 
     // For initialize
     LRegNumPath rstWriteLogRegNum [ COMMIT_WIDTH ];
     logic [ RMT_ENTRY_BIT_SIZE-1:0 ] rstWritePhyRegNum [ COMMIT_WIDTH ];
 
     always_comb begin
+`ifdef RSD_ENABLE_SMT
+        // Per-thread RMT write and read logic
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            // Write data
+            for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
+                if ( !port.rst ) begin
+                    // Only write if the thread ID matches
+                    rmtWE[t][i] = port.rmtWriteReg[i] && (port.thread[i] == t);
+                    rmtWA[t][i] = port.rmtWriteReg_LogRegNum[i];
+                    rmtWV[t][i].phyRegNum = port.rmtWriteReg_PhyRegNum[i].regNum;
+                    
+                    // Write to Write Bypass
+                    for ( int j = 0; j < i; j++ ) begin
+                        if ( rmtWE[t][i] && rmtWA[t][i] == rmtWA[t][j] ) begin
+                            rmtWE[t][j] = FALSE;
+                        end
+                    end
+
+                    // Write data
+                    rmtWV[t][i].regIssueQueuePtr = port.watWriteIssueQueuePtr[i];
+                end
+                else begin
+                    // Reset RMT
+                    rmtWE[t][i] = ( i == 0 ? TRUE : FALSE );
+                    rmtWA[t][i] = rstWriteLogRegNum[i];
+                    rmtWV[t][i].phyRegNum = rstWritePhyRegNum[i];
+                    rmtWV[t][i].regIssueQueuePtr = '0;
+                end
+            end
+
+            // Read data from the appropriate thread's RMT
+            for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
+                rmtRA[t][ RMT_REG_OPERAND_NUM*i   ] = port.logSrcRegA[i];
+                rmtRA[t][ RMT_REG_OPERAND_NUM*i+1 ] = port.logSrcRegB[i];
+                rmtRA[t][ RMT_REG_OPERAND_NUM*i+2 ] = port.logDstReg[i];
+            `ifdef RSD_MARCH_FP_PIPE
+                rmtRA[t][ RMT_REG_OPERAND_NUM*i+3 ] = port.logSrcRegC[i];
+            `endif
+            end
+        end
+
+        // Output reads from the appropriate thread's RMT
+        for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
+            ThreadID threadID = port.thread[i];
+            
+            `ifdef RSD_MARCH_FP_PIPE
+                phySrcRegA[i].isFP        = port.logSrcRegA[i].isFP;
+                phySrcRegB[i].isFP        = port.logSrcRegB[i].isFP;
+                phySrcRegC[i].isFP        = port.logSrcRegC[i].isFP;
+                phyPrevDstReg[i].isFP     = port.logDstReg[i].isFP;
+            `endif
+                
+                // Physical register number is read from thread-specific RMT
+                phySrcRegA[i].regNum    = rmtRV[ threadID ][ RMT_REG_OPERAND_NUM*i   ].phyRegNum;
+                phySrcRegB[i].regNum    = rmtRV[ threadID ][ RMT_REG_OPERAND_NUM*i+1 ].phyRegNum;
+                phyPrevDstReg[i].regNum = rmtRV[ threadID ][ RMT_REG_OPERAND_NUM*i+2 ].phyRegNum;
+            `ifdef RSD_MARCH_FP_PIPE
+                phySrcRegC[i].regNum    = rmtRV[ threadID ][ RMT_REG_OPERAND_NUM*i+3 ].phyRegNum;
+            `endif
+
+                // Dependent instructions' issue queue pointer is read from thread-specific WAT
+                srcIssueQueuePtrRegA[i] = rmtRV[threadID][RMT_REG_OPERAND_NUM*i].regIssueQueuePtr;
+                srcIssueQueuePtrRegB[i] = rmtRV[threadID][RMT_REG_OPERAND_NUM*i + 1].regIssueQueuePtr;
+                port.prevDependIssueQueuePtr[i] = rmtRV[threadID][RMT_REG_OPERAND_NUM*i + 2].regIssueQueuePtr;
+            `ifdef RSD_MARCH_FP_PIPE
+                srcIssueQueuePtrRegC[i] = rmtRV[threadID][RMT_REG_OPERAND_NUM*i + 3].regIssueQueuePtr;
+            `endif
+                
+                // Write to Read Bypass
+                for ( int j = 0; j < i; j++ ) begin
+                    if ( port.rmtWriteReg[j] && (port.thread[j] == threadID) ) begin
+                        if ( port.logSrcRegA[i] == port.logDstReg[j] ) begin
+                            phySrcRegA[i].regNum = port.rmtWriteReg_PhyRegNum[j].regNum;
+                            srcIssueQueuePtrRegA[i] = port.watWriteIssueQueuePtr[j];
+                        end
+                        if ( port.logSrcRegB[i] == port.logDstReg[j] ) begin
+                            phySrcRegB[i].regNum = port.rmtWriteReg_PhyRegNum[j].regNum;
+                            srcIssueQueuePtrRegB[i] = port.watWriteIssueQueuePtr[j];
+                        end
+                    `ifdef RSD_MARCH_FP_PIPE
+                        if ( port.logSrcRegC[i] == port.logDstReg[j] ) begin
+                            phySrcRegC[i].regNum = port.rmtWriteReg_PhyRegNum[j].regNum;
+                            srcIssueQueuePtrRegC[i] = port.watWriteIssueQueuePtr[j];
+                        end
+                    `endif
+                        if ( port.logDstReg[i] == port.logDstReg[j] ) begin
+                            phyPrevDstReg[i].regNum = port.rmtWriteReg_PhyRegNum[j].regNum;
+                            port.prevDependIssueQueuePtr[i] = port.watWriteIssueQueuePtr[j];
+                        end
+                    end
+                end
+        end
+`else
+        // Single-threaded logic (unchanged from original)
         // Write data
         for ( int i = 0; i < COMMIT_WIDTH; i++ ) begin
             if ( !port.rst ) begin
@@ -157,6 +278,7 @@ module RMT( RenameLogicIF.RMT port );
 
         port.srcIssueQueuePtrRegA = srcIssueQueuePtrRegA;
         port.srcIssueQueuePtrRegB = srcIssueQueuePtrRegB;
+`endif
 `ifdef RSD_MARCH_FP_PIPE
         port.srcIssueQueuePtrRegC = srcIssueQueuePtrRegC;
 `endif

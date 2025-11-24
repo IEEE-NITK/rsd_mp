@@ -68,8 +68,13 @@ interface ActiveListIF( input logic clk, rst );
 
 
     // ActiveList/LSQ TailPtr for recovery
+`ifdef RSD_ENABLE_SMT
+    LoadQueueIndexPath loadQueueRecoveryTailPtr[THREAD_NUM];
+    StoreQueueIndexPath storeQueueRecoveryTailPtr[THREAD_NUM];
+`else
     LoadQueueIndexPath loadQueueRecoveryTailPtr;
     StoreQueueIndexPath storeQueueRecoveryTailPtr;
+`endif
 
     // Flush range at exception-detected cycle
     ActiveListIndexPath detectedFlushRangeTailPtr;

@@ -57,10 +57,17 @@ interface RecoveryManagerIF( input logic clk, rst );
     logic flushAllInsns;
 
     // ActiveList/LSQ TailPtr for recovery
+`ifdef RSD_ENABLE_SMT
+    LoadQueueIndexPath loadQueueRecoveryTailPtr[THREAD_NUM];
+    LoadQueueIndexPath loadQueueHeadPtr[THREAD_NUM];
+    StoreQueueIndexPath storeQueueRecoveryTailPtr[THREAD_NUM];
+    StoreQueueIndexPath storeQueueHeadPtr[THREAD_NUM];
+`else
     LoadQueueIndexPath loadQueueRecoveryTailPtr;
     LoadQueueIndexPath loadQueueHeadPtr;
     StoreQueueIndexPath storeQueueRecoveryTailPtr;
     StoreQueueIndexPath storeQueueHeadPtr;
+`endif
 
     // IssueQueueEntryPtr to be flushed at recovery
     IssueQueueOneHotPath flushIQ_Entry;

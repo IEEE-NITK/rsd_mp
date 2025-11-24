@@ -45,7 +45,34 @@ module StoreQueue(
     // The pointer of released entry.
     StoreQueueIndexPath releasedStoreQueuePtr;
 
-    // The head/tail pointers of a store queue.
+`ifdef RSD_ENABLE_SMT
+    // Per-thread pointers and controllers
+    StoreQueueIndexPath headPtr[THREAD_NUM];
+    StoreQueueIndexPath tailPtr[THREAD_NUM];
+
+    RenameLaneCountPath pushCount[THREAD_NUM];
+    StoreQueueCountPath curCount[THREAD_NUM];
+    logic push[THREAD_NUM];
+
+    for (genvar t = 0; t < THREAD_NUM; t++) begin : storeQueuePointerInstances
+        SetTailMultiWidthQueuePointer #( STORE_QUEUE_ENTRY_NUM, 0, 0, 0, RENAME_WIDTH, COMMIT_WIDTH )
+            storeQueuePointer(
+                .clk(port.clk),
+                .rst(port.rst),
+                .pop(port.releaseStoreQueueHead),
+                .popCount(port.releaseStoreQueueHeadEntryNum[t]),
+                .push(push[t]),
+                .pushCount(pushCount[t]),
+                .setTail(recovery.toRecoveryPhase),
+                .setTailPtr(recovery.storeQueueRecoveryTailPtr[t]),
+                .count(curCount[t]),
+                .headPtr(headPtr[t]),
+                .tailPtr(tailPtr[t])
+            );
+    end
+
+`else
+    // The head/tail pointers of a store queue (single-threaded).
     StoreQueueIndexPath headPtr;
     StoreQueueIndexPath tailPtr;
 
@@ -70,8 +97,47 @@ module StoreQueue(
             .tailPtr(tailPtr)
         );
 
-    always_comb begin
+`endif
 
+    always_comb begin
+`ifdef RSD_ENABLE_SMT
+        // Initialize all push counts to 0
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            pushCount[t] = 0;
+        end
+        
+        // Route each allocation to its correct thread
+        for (int i = 0; i < RENAME_WIDTH; i++) begin
+        if (tailPtr[port.allocateStoreQueueThread[i]] + pushCount[port.allocateStoreQueueThread[i]] < STORE_QUEUE_ENTRY_NUM) begin
+        port.allocatedStoreQueuePtr[i] = tailPtr[port.allocateStoreQueueThread[i]] + pushCount[port.allocateStoreQueueThread[i]];
+        end else begin
+        port.allocatedStoreQueuePtr[i] = 
+        tailPtr[port.allocateStoreQueueThread[i]] + pushCount[port.allocateStoreQueueThread[i]] - STORE_QUEUE_ENTRY_NUM;
+        end
+        pushCount[port.allocateStoreQueueThread[i]] += port.allocateStoreQueue[i];
+        end
+        
+        // Generate push signals
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            push[t] = pushCount[t] > 0;
+        end
+
+        // Check allocatable - any thread can allocate?
+        port.storeQueueAllocatable = FALSE;
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            if (curCount[t] <= STORE_QUEUE_ENTRY_NUM - RENAME_WIDTH - 1) begin
+                port.storeQueueAllocatable = TRUE;
+            end
+        end
+        
+        port.storeQueueCount = curCount[0];  // TBD: Could be per-thread in future
+        port.storeQueueEmpty = (curCount[0] == 0) && (curCount[1] == 0);
+
+        recovery.storeQueueHeadPtr[0] = headPtr[0];
+        recovery.storeQueueHeadPtr[1] = headPtr[1];
+
+`else
+        // Single-threaded version (original)
         pushCount = 0;
         for (int i = 0; i < RENAME_WIDTH; i++) begin
             if (tailPtr + pushCount < STORE_QUEUE_ENTRY_NUM) begin
@@ -92,6 +158,7 @@ module StoreQueue(
         port.storeQueueEmpty = curCount == 0;
 
         recovery.storeQueueHeadPtr = headPtr;
+`endif
     end
 
 
@@ -99,7 +166,50 @@ module StoreQueue(
     // SQ's address and data storage.
     //
 
-    // The address part of a SQ.
+`ifdef RSD_ENABLE_SMT
+    // The address part of a SQ (per-thread).
+    StoreQueueAddrEntry storeQueue[THREAD_NUM][STORE_QUEUE_ENTRY_NUM-1:0];
+
+    logic  executeStore[STORE_ISSUE_WIDTH];
+    LSQ_BlockAddrPath executedStoreAddr[STORE_ISSUE_WIDTH];
+    LSQ_BlockWordEnablePath executedStoreWordWE[STORE_ISSUE_WIDTH];
+    LSQ_WordByteEnablePath executedStoreByteWE[STORE_ISSUE_WIDTH];
+    logic executedStoreCondEnabled[STORE_ISSUE_WIDTH];
+    logic executedStoreRegValid[STORE_ISSUE_WIDTH];
+    StoreQueueIndexPath executedStoreQueuePtrByStore[STORE_ISSUE_WIDTH];
+
+    always_ff @(posedge port.clk) begin
+        if(port.rst) begin
+            for (int t = 0; t < THREAD_NUM; t++) begin
+                for( int i = 0; i < STORE_QUEUE_ENTRY_NUM; i++) begin
+                    storeQueue[t][i].finished <= FALSE;
+                    storeQueue[t][i].address <= '0;
+                    storeQueue[t][i].wordWE <= '0;
+                    storeQueue[t][i].byteWE <= '0;
+                end
+            end
+        end
+        else begin
+            for (int i = 0; i < STORE_ISSUE_WIDTH; i++) begin
+                if( executeStore[i] ) begin
+                    storeQueue[port.thread[0]][ executedStoreQueuePtrByStore[i] ].regValid <= executedStoreRegValid[i];
+                    storeQueue[port.thread[0]][ executedStoreQueuePtrByStore[i] ].finished <= executedStoreCondEnabled[i];
+                    storeQueue[port.thread[0]][ executedStoreQueuePtrByStore[i] ].address <= executedStoreAddr[i];
+                    storeQueue[port.thread[0]][ executedStoreQueuePtrByStore[i] ].wordWE <= executedStoreWordWE[i];
+                    storeQueue[port.thread[0]][ executedStoreQueuePtrByStore[i] ].byteWE <= executedStoreByteWE[i];
+                end
+            end
+
+            for (int i = 0; i < RENAME_WIDTH; i++) begin
+                if (port.allocateStoreQueue[i]) begin
+                    storeQueue[port.thread[0]][ port.allocatedStoreQueuePtr[i] ].finished <= FALSE;
+                end
+            end
+        end
+    end
+
+`else
+    // The address part of a SQ (single-threaded).
     StoreQueueAddrEntry storeQueue[STORE_QUEUE_ENTRY_NUM-1:0];
 
     logic  executeStore[STORE_ISSUE_WIDTH];
@@ -137,6 +247,8 @@ module StoreQueue(
             end
         end
     end
+
+`endif
 
     always_comb begin
         // Pick store execution results.

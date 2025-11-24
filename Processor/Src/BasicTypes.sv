@@ -51,6 +51,17 @@ typedef logic [VEC_WIDTH-1:0] VectorPath;
 // --- Register File
 //
 
+//
+// --- Thread Context (SMT)
+//
+localparam THREAD_NUM = CONF_THREAD_NUM;
+localparam THREAD_ID_BIT_WIDTH = CONF_THREAD_ID_BIT_WIDTH;
+`ifdef RSD_ENABLE_SMT
+typedef logic [THREAD_ID_BIT_WIDTH-1:0] ThreadID;
+`else
+typedef logic ThreadID;  // Single bit for single-threaded mode
+`endif
+
 // Logical register number width
 localparam LSCALAR_NUM = 32;
 localparam LSCALAR_NUM_BIT_WIDTH = $clog2( LSCALAR_NUM );

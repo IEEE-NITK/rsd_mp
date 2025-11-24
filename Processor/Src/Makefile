@@ -115,7 +115,7 @@ dump:
 	$(KANATA_CONVERTER) $(RSD_LOG_FILE_RTL) $(KANATA_LOG_FILE_RTL)
 
 $(LIBRARY_WORK_RTL):
-	mkdir $(PROJECT_WORK) -p
+	mkdir -p $(PROJECT_WORK)
 
 clean:
 	rm $(LIBRARY_WORK_RTL) -f -r

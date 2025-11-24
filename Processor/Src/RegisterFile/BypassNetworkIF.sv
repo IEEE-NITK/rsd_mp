@@ -26,6 +26,7 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
     logic intReadRegB [ INT_ISSUE_WIDTH ];
 
     logic intWriteReg  [ INT_ISSUE_WIDTH ];
+    ThreadID intThreadID [ INT_ISSUE_WIDTH ];  // ADD THIS FOR SMT
     
     BypassControll intCtrlOut [ INT_ISSUE_WIDTH ];
     
@@ -51,6 +52,7 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
     logic complexReadRegB [ COMPLEX_ISSUE_WIDTH ];
 
     logic complexWriteReg  [ COMPLEX_ISSUE_WIDTH ];
+    ThreadID complexThreadID [ COMPLEX_ISSUE_WIDTH ];  // ADD THIS FOR SMT
 
     PRegDataPath complexSrcRegDataA [ COMPLEX_ISSUE_WIDTH ];
     PRegDataPath complexSrcRegDataB [ COMPLEX_ISSUE_WIDTH ];
@@ -79,6 +81,7 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
     logic memReadRegB [ MEM_ISSUE_WIDTH ];
 
     logic memWriteReg  [ MEM_ISSUE_WIDTH ];
+    ThreadID memThreadID [ MEM_ISSUE_WIDTH ];  // ADD THIS FOR SMT
     
     BypassControll memCtrlOut [ MEM_ISSUE_WIDTH ];
     
@@ -105,6 +108,7 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
     logic fpReadRegC [ FP_ISSUE_WIDTH ];
 
     logic fpWriteReg  [ FP_ISSUE_WIDTH ];
+    ThreadID fpThreadID [ FP_ISSUE_WIDTH ];  // ADD THIS FOR SMT
 
     PRegDataPath fpSrcRegDataA [ FP_ISSUE_WIDTH ];
     PRegDataPath fpSrcRegDataB [ FP_ISSUE_WIDTH ];
@@ -132,6 +136,7 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
         intReadRegA,
         intReadRegB,
         intWriteReg,
+        intThreadID,  // ADD THIS FOR SMT
 `ifndef RSD_MARCH_UNIFIED_MULDIV_MEM_PIPE
         complexPhySrcRegNumA,
         complexPhySrcRegNumB,
@@ -139,6 +144,7 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
         complexReadRegA,
         complexReadRegB,
         complexWriteReg,
+        complexThreadID,  // ADD THIS FOR SMT
 `endif
         memPhySrcRegNumA,
         memPhySrcRegNumB,
@@ -146,6 +152,7 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
         memReadRegA,
         memReadRegB,
         memWriteReg,
+        memThreadID,  // ADD THIS FOR SMT
 `ifdef RSD_MARCH_FP_PIPE
         fpPhySrcRegNumA,
         fpPhySrcRegNumB,
@@ -155,6 +162,7 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
         fpReadRegB,
         fpReadRegC,
         fpWriteReg,
+        fpThreadID,  // ADD THIS FOR SMT
 `endif
     output
         intCtrlOut,
@@ -212,7 +220,8 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
         intPhyDstRegNum,
         intReadRegA,
         intReadRegB,
-        intWriteReg
+        intWriteReg,
+        intThreadID  // ADD THIS FOR SMT
     );
     
     modport IntegerExecutionStage(
@@ -236,7 +245,8 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
         complexPhyDstRegNum,
         complexReadRegA,
         complexReadRegB,
-        complexWriteReg
+        complexWriteReg,
+        complexThreadID  // ADD THIS FOR SMT
     );
     
     modport ComplexIntegerExecutionStage(
@@ -260,7 +270,8 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
         memPhyDstRegNum,
         memReadRegA,
         memReadRegB,
-        memWriteReg
+        memWriteReg,
+        memThreadID  // ADD THIS FOR SMT
     );
 
     modport MemoryExecutionStage(
@@ -290,7 +301,8 @@ interface BypassNetworkIF(input logic clk, rst, rstStart);
         fpReadRegA,
         fpReadRegB,
         fpReadRegC,
-        fpWriteReg
+        fpWriteReg,
+        fpThreadID  // ADD THIS FOR SMT
     );
     
     modport FPExecutionStage(

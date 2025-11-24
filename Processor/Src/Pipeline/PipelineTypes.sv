@@ -77,6 +77,9 @@ typedef struct packed { // FetchStageRegPath
 `endif
     logic valid;
     PC_Path pc;
+`ifdef RSD_ENABLE_SMT
+    ThreadID thread;
+`endif
 } FetchStageRegPath;
 
 typedef struct packed // PreDecodeStageRegPath
@@ -89,6 +92,9 @@ typedef struct packed // PreDecodeStageRegPath
     InsnPath insn;      // Instruction code
     PC_Path pc;
     BranchPred brPred;
+`ifdef RSD_ENABLE_SMT
+    ThreadID thread;
+`endif
 } PreDecodeStageRegPath;
 
 typedef struct packed // DecodeStageRegPath
@@ -104,6 +110,9 @@ typedef struct packed // DecodeStageRegPath
 
     OpInfo [MICRO_OP_MAX_NUM-1:0] microOps;  // Decoded micro ops
     InsnInfo insnInfo;   // Whether a decoded instruction is branch or not.
+`ifdef RSD_ENABLE_SMT
+    ThreadID thread;
+`endif
 } DecodeStageRegPath;
 
 
@@ -117,6 +126,9 @@ typedef struct packed // RenameStageRegPath
     OpInfo   opInfo;    // Decoded micro op.
     PC_Path pc;
     BranchPred bPred;
+`ifdef RSD_ENABLE_SMT
+    ThreadID thread;
+`endif
 } RenameStageRegPath;
 
 typedef struct packed // DispatchStageRegPath
@@ -153,6 +165,9 @@ typedef struct packed // DispatchStageRegPath
     StoreQueueIndexPath storeQueuePtr;
     LoadQueueIndexPath loadQueueRecoveryPtr;
     StoreQueueIndexPath storeQueueRecoveryPtr;
+`ifdef RSD_ENABLE_SMT
+    ThreadID thread;
+`endif
 } DispatchStageRegPath;
 
 typedef struct packed // IssueStageRegPath

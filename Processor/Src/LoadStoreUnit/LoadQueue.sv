@@ -30,8 +30,34 @@ module LoadQueue(
 
     logic reset;
 
-    // Head and tail pointers.
-    // This head pointer refers the next entry of the last valid entry.
+`ifdef RSD_ENABLE_SMT
+    // Per-thread pointers and controllers
+    LoadQueueIndexPath headPtr[THREAD_NUM];
+    LoadQueueIndexPath tailPtr[THREAD_NUM];
+    
+    logic push[THREAD_NUM];
+    RenameLaneCountPath pushCount[THREAD_NUM];
+    LoadQueueCountPath curCount[THREAD_NUM];
+    
+    for (genvar t = 0; t < THREAD_NUM; t++) begin : loadQueuePointerInstances
+        SetTailMultiWidthQueuePointer #(LOAD_QUEUE_ENTRY_NUM, 0, 0, 0, RENAME_WIDTH, COMMIT_WIDTH)
+            loadQueuePointer(
+                .clk(port.clk),
+                .rst(reset),
+                .pop(port.releaseLoadQueue),
+                .popCount(port.releaseLoadQueueEntryNum[t]),
+                .push(push[t]),
+                .pushCount(pushCount[t]),
+                .setTail(recovery.toRecoveryPhase),
+                .setTailPtr(recovery.loadQueueRecoveryTailPtr[t]),
+                .count(curCount[t]),
+                .headPtr(headPtr[t]),
+                .tailPtr(tailPtr[t])
+            );
+    end
+
+`else
+    // Single-threaded pointers and controllers
     LoadQueueIndexPath headPtr;
     LoadQueueIndexPath tailPtr;
 
@@ -54,8 +80,45 @@ module LoadQueue(
             .tailPtr(tailPtr)
         );
 
+`endif
+
     always_comb begin
-        // Generate push signals.
+        // Generate push signals - route each allocation to its correct thread
+`ifdef RSD_ENABLE_SMT
+        // Initialize all push counts to 0
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            pushCount[t] = 0;
+        end
+        
+        // Route each allocation to its correct thread
+        for (int i = 0; i < RENAME_WIDTH; i++) begin
+            if (tailPtr[port.allocateLoadQueueThread[i]] + pushCount[port.allocateLoadQueueThread[i]] < LOAD_QUEUE_ENTRY_NUM) begin
+                port.allocatedLoadQueuePtr[i] = tailPtr[port.allocateLoadQueueThread[i]] + pushCount[port.allocateLoadQueueThread[i]];
+            end else begin
+                port.allocatedLoadQueuePtr[i] = 
+                    tailPtr[port.allocateLoadQueueThread[i]] + pushCount[port.allocateLoadQueueThread[i]] - LOAD_QUEUE_ENTRY_NUM;
+            end
+            pushCount[port.allocateLoadQueueThread[i]] += port.allocateLoadQueue[i];
+        end
+        
+        // Generate push signals
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            push[t] = pushCount[t] > 0;
+        end
+
+        // Check allocatable - any thread can allocate?
+        port.loadQueueAllocatable = FALSE;
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            if (curCount[t] <= LOAD_QUEUE_ENTRY_NUM - RENAME_WIDTH - 1) begin
+                port.loadQueueAllocatable = TRUE;
+            end
+        end
+
+        recovery.loadQueueHeadPtr[0] = headPtr[0];
+        recovery.loadQueueHeadPtr[1] = headPtr[1];
+
+`else
+        // Single-threaded version (original code)
         pushCount = 0;
         for ( int i = 0; i < RENAME_WIDTH; i++ ) begin
             if (tailPtr + pushCount < LOAD_QUEUE_ENTRY_NUM) begin
@@ -75,11 +138,47 @@ module LoadQueue(
             (curCount <= LOAD_QUEUE_ENTRY_NUM - RENAME_WIDTH - 1) ? TRUE : FALSE;
 
         recovery.loadQueueHeadPtr = headPtr;
+`endif
     end
 
 
 
     // Address and finish flag storage.
+`ifdef RSD_ENABLE_SMT
+    LoadQueueEntry      loadQueue[THREAD_NUM][LOAD_QUEUE_ENTRY_NUM];
+    LoadQueueIndexPath  executedLoadQueuePtrByLoad[LOAD_ISSUE_WIDTH];
+    LSQ_BlockAddrPath   executedLoadAddr[LOAD_ISSUE_WIDTH];
+    LSQ_BlockWordEnablePath executedLoadWordRE[LOAD_ISSUE_WIDTH];
+    logic executedLoadRegValid[LOAD_ISSUE_WIDTH];
+    always_ff @(posedge port.clk) begin
+        if (reset) begin
+            for (int t = 0; t < THREAD_NUM; t++) begin
+                for (int i = 0; i < LOAD_QUEUE_ENTRY_NUM; i++) begin
+                    loadQueue[t][i].finished <= FALSE;
+                end
+            end
+        end
+        else begin
+            for (int i = 0; i < LOAD_ISSUE_WIDTH; i++) begin
+                if (port.executeLoad[i]) begin
+                    loadQueue[port.thread[0]][ executedLoadQueuePtrByLoad[i] ].regValid <= executedLoadRegValid[i];
+                    loadQueue[port.thread[0]][ executedLoadQueuePtrByLoad[i] ].finished <= TRUE;
+                    loadQueue[port.thread[0]][ executedLoadQueuePtrByLoad[i] ].address <= executedLoadAddr[i];
+                    loadQueue[port.thread[0]][ executedLoadQueuePtrByLoad[i] ].wordRE <= executedLoadWordRE[i];
+                    loadQueue[port.thread[0]][ executedLoadQueuePtrByLoad[i] ].pc <= port.executedLoadPC[i];
+                end
+            end
+
+            for (int i = 0; i < RENAME_WIDTH; i++) begin
+                if (port.allocateLoadQueue[i]) begin
+                    loadQueue[port.thread[0]][ port.allocatedLoadQueuePtr[i] ].finished <= FALSE;
+                end
+            end
+        end
+    end
+
+`else
+    // Single-threaded storage
     LoadQueueEntry      loadQueue[LOAD_QUEUE_ENTRY_NUM];
     LoadQueueIndexPath  executedLoadQueuePtrByLoad[LOAD_ISSUE_WIDTH];
     LSQ_BlockAddrPath   executedLoadAddr[LOAD_ISSUE_WIDTH];
@@ -109,6 +208,8 @@ module LoadQueue(
             end
         end
     end
+
+`endif
 
     always_comb begin
         for (int i = 0; i < LOAD_ISSUE_WIDTH; i++) begin

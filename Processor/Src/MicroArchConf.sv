@@ -4,6 +4,17 @@
 
 package MicroArchConf;
 
+// ---- SMT Configuration
+// Number of simultaneous threads (1 = single-threaded, 2+ = multi-threaded)
+// Default is 1 for backward compatibility
+// Can be overridden by RSD_ENABLE_SMT macro
+`ifdef RSD_ENABLE_SMT
+    localparam CONF_THREAD_NUM = 2;
+`else
+    localparam CONF_THREAD_NUM = 1;
+`endif
+localparam CONF_THREAD_ID_BIT_WIDTH = (CONF_THREAD_NUM > 1) ? $clog2(CONF_THREAD_NUM) : 0;
+
 // ---- Front-end
 // Fetch width (instructions). This parameter is configurable.
 localparam CONF_FETCH_WIDTH = 2;

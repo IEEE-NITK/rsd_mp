@@ -127,8 +127,15 @@ module NextPCStage(
         //   1) if PC is written from outside
         //   2) if it is beginning of stall
         //   (see the comment of regBrPred in FetchStage.sv)
+`ifdef RSD_ENABLE_SMT
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            port.pcWE[t] = 
+                (writePC_FromOuter || !stall || beginStall) && !port.rst;
+        end
+`else
         port.pcWE = 
             (writePC_FromOuter || !stall || beginStall) && !port.rst;
+`endif
     end
 
 
@@ -149,7 +156,11 @@ module NextPCStage(
         end
         else begin
             // Use current PC
+`ifdef RSD_ENABLE_SMT
+            predNextPC = port.pcOut[port.currentThread];
+`else
             predNextPC = port.pcOut;
+`endif
 
             for (int i = 0; i < FETCH_WIDTH; i++) begin
                 // Process of branch prediction:
@@ -180,22 +191,38 @@ module NextPCStage(
             // NOTE: This input can be a critical path.
             // Hence, interrupt address is input to PC first rather than 
             // input to the branch predictor directly.
+`ifdef RSD_ENABLE_SMT
+            port.pcIn[port.currentThread] = port.interruptAddrIn;
+`else
             port.pcIn = port.interruptAddrIn;
+`endif
         end
         else if (beginStall) begin
             // Update PC based on the branch prediction result accessed
             // immediately before the stall if it is beginning of stall.
             // (see the comment of regBrPred in FetchStage.sv)
+`ifdef RSD_ENABLE_SMT
+            port.pcIn[port.currentThread] = predNextPC;
+`else
             port.pcIn = predNextPC;
+`endif
         end
         else begin
             // Increment PC
+`ifdef RSD_ENABLE_SMT
+            port.pcIn[port.currentThread] = predNextPC + FETCH_WIDTH*INSN_BYTE_WIDTH;
+`else
             port.pcIn = predNextPC + FETCH_WIDTH*INSN_BYTE_WIDTH;
+`endif
             for (int i = 1; i < FETCH_WIDTH; i++) begin
                 if (StepOverCacheLine(predNextPC, 
                                      predNextPC+i*INSN_BYTE_WIDTH)) begin
                     // When PC stepped over the border of cache line, stop there
+`ifdef RSD_ENABLE_SMT
+                    port.pcIn[port.currentThread] = predNextPC+i*INSN_BYTE_WIDTH;
+`else
                     port.pcIn = predNextPC+i*INSN_BYTE_WIDTH;
+`endif
                     break;
                 end
             end
@@ -207,6 +234,9 @@ module NextPCStage(
             nextStage[i].sid = curSID + i;
 `endif
             nextStage[i].pc = predNextPC + i * INSN_BYTE_WIDTH;
+`ifdef RSD_ENABLE_SMT
+            nextStage[i].thread = fetchThread;
+`endif
             if (port.interruptAddrWE || clear ||
                 StepOverCacheLine(predNextPC, nextStage[i].pc)) begin
                 nextStage[i].valid = FALSE;

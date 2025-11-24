@@ -194,10 +194,21 @@ module RecoveryManager(
             (nextState.refetchType inside {REFETCH_TYPE_THIS_PC, REFETCH_TYPE_THIS_PC_TO_CSR_TARGET}) ?
                 exceptionOpPtr : exceptionOpPtr + 1;
         nextState.flushRangeTailPtr = activeList.detectedFlushRangeTailPtr;
+        `ifdef RSD_ENABLE_SMT
+        port.loadQueueRecoveryTailPtr[0] = activeList.loadQueueRecoveryTailPtr[0];
+        port.loadQueueRecoveryTailPtr[1] = activeList.loadQueueRecoveryTailPtr[1];
+        port.storeQueueRecoveryTailPtr[0] = 
+            regState.refetchType == REFETCH_TYPE_STORE_NEXT_PC ? 
+                (activeList.storeQueueRecoveryTailPtr[0] + 1): activeList.storeQueueRecoveryTailPtr[0];
+        port.storeQueueRecoveryTailPtr[1] = 
+            regState.refetchType == REFETCH_TYPE_STORE_NEXT_PC ? 
+                (activeList.storeQueueRecoveryTailPtr[1] + 1): activeList.storeQueueRecoveryTailPtr[1];
+        `else
         port.loadQueueRecoveryTailPtr = activeList.loadQueueRecoveryTailPtr;
         port.storeQueueRecoveryTailPtr = 
             regState.refetchType == REFETCH_TYPE_STORE_NEXT_PC ? 
                 (activeList.storeQueueRecoveryTailPtr + 1): activeList.storeQueueRecoveryTailPtr;
+        `endif
 
         port.flushRangeHeadPtr = regState.flushRangeHeadPtr;
         port.flushRangeTailPtr = regState.flushRangeTailPtr;

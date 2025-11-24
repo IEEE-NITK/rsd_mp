@@ -14,9 +14,18 @@ import MemoryMapTypes::*;
 interface NextPCStageIF( input logic clk, rst, rstStart );
     
     // PC
+`ifdef RSD_ENABLE_SMT
+    // Multi-threaded: per-thread PC
+    logic    pcWE[THREAD_NUM];
+    PC_Path  pcOut[THREAD_NUM];
+    PC_Path  pcIn[THREAD_NUM];
+    ThreadID currentThread;
+`else
+    // Single-threaded: compatible with original design
     logic    pcWE;
     PC_Path  pcOut;
     PC_Path  pcIn;
+`endif
 
     PC_Path  predNextPC;
 
@@ -34,6 +43,31 @@ interface NextPCStageIF( input logic clk, rst, rstStart );
     // Pipeline register
     FetchStageRegPath nextStage[ FETCH_WIDTH ];
 
+`ifdef RSD_ENABLE_SMT
+    modport PC(
+    input
+        clk, rst, pcWE, pcIn,
+    output
+        pcOut, currentThread
+    );
+
+    modport ThisStage(
+    input
+        clk,
+        rst,
+        pcOut,
+        brResult,
+        interruptAddrIn,
+        interruptAddrWE,
+        currentThread,
+    output
+        pcWE,
+        pcIn,
+        predNextPC,
+        icNextReadAddrIn,
+        nextStage
+    );
+`else
     modport PC(
     input
         clk, rst, pcWE, pcIn,
@@ -56,6 +90,7 @@ interface NextPCStageIF( input logic clk, rst, rstStart );
         icNextReadAddrIn,
         nextStage
     );
+`endif
 
     modport NextStage(
     input

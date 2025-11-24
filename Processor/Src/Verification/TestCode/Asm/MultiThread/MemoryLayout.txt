@@ -1,0 +1,17 @@
+Multi-Thread Test Memory Layout
+=================================
+
+Thread 0 Code:     0x1000 - 0x1FFF (4 KB)
+Thread 0 Data:     0x2000 - 0x2FFF (4 KB)
+Thread 1 Code:     0x3000 - 0x3FFF (4 KB)
+Thread 1 Data:     0x4000 - 0x4FFF (4 KB)
+Shared Region:     0x5000 - 0x5FFF (4 KB, for synchronization)
+
+Thread IDs:
+- Thread 0: Identified by CSR or boot register
+- Thread 1: Identified by CSR or boot register
+
+Register Usage by Thread:
+- Thread 0: r1-r6 for primary calculations
+- Thread 1: r7-r12 for primary calculations
+- Both: Can use other registers as needed

@@ -33,8 +33,40 @@ module ActiveList(
     DebugIF.ActiveList debug
 );
 
+`ifdef RSD_ENABLE_SMT
     //
-    // --- Pointers
+    // --- Per-thread Pointers
+    //
+    ActiveListIndexPath headPtr[THREAD_NUM]/*verilator public*/;
+    ActiveListIndexPath headPtrList[THREAD_NUM][COMMIT_WIDTH];
+    ActiveListIndexPath tailPtr[THREAD_NUM];
+    ActiveListIndexPath tailPtrList[THREAD_NUM][COMMIT_WIDTH];
+    ActiveListIndexPath readPtrList[THREAD_NUM][COMMIT_WIDTH];
+    ActiveListIndexPath pushedTailPtr[THREAD_NUM][RENAME_WIDTH];
+    ActiveListCountPath count[THREAD_NUM];
+    RenameLaneCountPath pushNum[THREAD_NUM];
+
+    // Per-thread queue pointers
+    for (genvar t = 0; t < THREAD_NUM; t++) begin : activeListPointerInstances
+        BiTailMultiWidthQueuePointer #(ACTIVE_LIST_ENTRY_NUM, 0, 0, 0, RENAME_WIDTH, COMMIT_WIDTH)
+            activeListPointer(
+                .clk(port.clk),
+                .rst(port.rst),
+                .popHead(port.popHeadNum[t] > 0),
+                .popHeadCount(port.popHeadNum[t]),
+                .pushTail(pushNum[t] > 0),
+                .pushTailCount(pushNum[t]),
+                .popTail( port.popTailNum[t] > 0 ),
+                .popTailCount( port.popTailNum[t] ),
+                .count(count[t]),
+                .headPtr(headPtr[t]),
+                .tailPtr(tailPtr[t])
+            );
+    end
+
+`else
+    //
+    // --- Pointers (Single-threaded)
     //
     ActiveListIndexPath headPtr/*verilator public*/;   // Set it public from a test bench for verilator.
     ActiveListIndexPath headPtrList[COMMIT_WIDTH];
@@ -61,9 +93,58 @@ module ActiveList(
             .tailPtr(tailPtr)
         );
 
+`endif
+
     always_comb begin
         // In the active list, recovery and allocation can be simultaneously carried out,
         // thus allocation is decided by its current count without its phase.
+        `ifdef RSD_ENABLE_SMT
+        // For SMT, check current thread's active list
+        port.allocatable = (count[port.thread[0]] <= ACTIVE_LIST_ENTRY_NUM - RENAME_WIDTH) ? TRUE : FALSE;
+        port.validEntryNum = count[port.thread[0]];
+
+        for (int t = 0; t < THREAD_NUM; t++) begin
+            pushNum[t] = 0;
+            for (int i = 0; i < RENAME_WIDTH; i++) begin
+                if ((tailPtr[t] + pushNum[t]) >= ACTIVE_LIST_ENTRY_NUM) begin
+                    pushedTailPtr[t][i] = tailPtr[t] + pushNum[t] - ACTIVE_LIST_ENTRY_NUM;
+                end
+                else begin
+                    pushedTailPtr[t][i] = tailPtr[t] + pushNum[t];
+                end
+                pushNum[t] += (port.pushTail[i] && (port.thread[i] == t) ? 1 : 0);
+            end
+            for (int i = 0; i < COMMIT_WIDTH; i++) begin
+                if ((headPtr[t] + i) < ACTIVE_LIST_ENTRY_NUM) begin
+                    headPtrList[t][i] = headPtr[t] + i;
+                end
+                else begin
+                    headPtrList[t][i] = headPtr[t] + i - ACTIVE_LIST_ENTRY_NUM;
+                end
+            end
+            for (int i = 0; i < COMMIT_WIDTH; i++) begin
+                if (( tailPtr[t] - 1 - i) >= ACTIVE_LIST_ENTRY_NUM) begin
+                    tailPtrList[t][i] = tailPtr[t] - 1 - i + ACTIVE_LIST_ENTRY_NUM;
+                end
+                else begin
+                    tailPtrList[t][i] = tailPtr[t] - 1 - i;
+                end
+            end
+
+            if( RECOVERY_FROM_ACTIVE_LIST && ( port.popTailNum[t] > 0 ) ) begin
+                readPtrList[t] = tailPtrList[t];
+            end else begin
+                readPtrList[t] = headPtrList[t];
+            end
+        end
+
+        port.detectedFlushRangeTailPtr = tailPtr[currentThread] + pushNum[currentThread];
+        port.pushedTailPtr = pushedTailPtr[currentThread];
+
+        ctrl.activeListEmpty = (count[0] == 0) && (count[1] == 0);
+
+`else
+        // Single-threaded version (original)
         port.allocatable = (count <= ACTIVE_LIST_ENTRY_NUM - RENAME_WIDTH) ? TRUE : FALSE;
         port.validEntryNum = count;
 
@@ -105,17 +186,55 @@ module ActiveList(
         //port.detectedFlushRangeHeadPtr = headPtr + port.popHeadNum;
 
         ctrl.activeListEmpty = count == 0;
+`endif
 
 `ifndef RSD_DISABLE_DEBUG_REGISTER
         // Debug Register
+`ifdef RSD_ENABLE_SMT
+        debug.activeListHeadPtr = headPtr[0];
+        debug.activeListCount = count[0];
+`else
         debug.activeListHeadPtr = headPtr;
         debug.activeListCount = count;
+`endif
 `endif
     end
 
 
+`ifdef RSD_ENABLE_SMT
     //
-    // --- Active List
+    // --- Per-thread Active List
+    //
+    logic pushTail [RENAME_WIDTH];
+    ActiveListEntry pushedTailData [RENAME_WIDTH];
+    ActiveListEntry readData[COMMIT_WIDTH];
+
+    // Per-thread active list data arrays
+    for (genvar t = 0; t < THREAD_NUM; t++) begin : activeListInstances
+        DistributedMultiBankRAM #(
+            .ENTRY_NUM( ACTIVE_LIST_ENTRY_NUM ),
+            .ENTRY_BIT_SIZE( $bits( ActiveListEntry ) ),
+            .READ_NUM( COMMIT_WIDTH  ),
+            .WRITE_NUM( RENAME_WIDTH )
+        ) activeList (
+            .clk( port.clk ),
+            .we( pushTail ),
+            .wa( pushedTailPtr[t] ),
+            .wv( pushedTailData ),
+            .ra( readPtrList[t] ),
+            .rv( readData )
+        );
+    end
+
+    always_comb begin
+        pushTail = port.pushTail;
+        pushedTailData = port.pushedTailData;
+        port.readData = readData;
+    end
+
+`else
+    //
+    // --- Active List (Single-threaded)
     //
     logic pushTail [RENAME_WIDTH];
     ActiveListEntry pushedTailData [RENAME_WIDTH];
@@ -141,6 +260,8 @@ module ActiveList(
         pushedTailData = port.pushedTailData;
         port.readData = readData;
     end
+
+`endif
 
 
     //
@@ -223,7 +344,11 @@ module ActiveList(
 
     always_comb begin
         nextRecoveryReg = recoveryReg;
+        `ifdef RSD_ENABLE_SMT
+        oldestAge = ActiveListPtrToAge(recoveryReg.ptr, headPtr[port.thread[0]]);
+`else
         oldestAge = ActiveListPtrToAge(recoveryReg.ptr, headPtr);
+`endif
         
         exceptionIndex = '0;
         exceptionDetected = FALSE;
@@ -288,8 +413,16 @@ module ActiveList(
         recovery.faultingDataAddr = recoveryReg.faultingDataAddr;
 
         //LSQのリカバリに用いる
+        `ifdef RSD_ENABLE_SMT
+        // Broadcast recovery tail ptrs to both threads
+        port.loadQueueRecoveryTailPtr[0] = recoveryReg.loadQueuePtr;
+        port.loadQueueRecoveryTailPtr[1] = recoveryReg.loadQueuePtr;
+        port.storeQueueRecoveryTailPtr[0] = recoveryReg.storeQueuePtr;
+        port.storeQueueRecoveryTailPtr[1] = recoveryReg.storeQueuePtr;
+        `else
         port.loadQueueRecoveryTailPtr = recoveryReg.loadQueuePtr;
         port.storeQueueRecoveryTailPtr = recoveryReg.storeQueuePtr;
+        `endif
 
         //リカバリをしなければならない命令はアクティブリストのtailからリカバリを起こした命令(またはその命令の後ろ)までのエントリにあたる
         flushRangeHeadPtr = recovery.flushRangeHeadPtr;
@@ -361,7 +494,11 @@ module ActiveList(
         else begin
             for (int i = 0; i < RENAME_WIDTH; i++) begin
                 esWE[i] = port.pushTail[i];
+            `ifdef RSD_ENABLE_SMT
+                esWA[i] = pushedTailPtr[port.thread[i]][i];
+`else
                 esWA[i] = pushedTailPtr[i];
+`endif
                 esWV[i] = FALSE;
             end
 
@@ -375,7 +512,11 @@ module ActiveList(
             end
         end
 
-        esRA = headPtrList;
+`ifdef RSD_ENABLE_SMT
+esRA = headPtrList[port.thread[0]];
+`else
+esRA = headPtrList;
+`endif
         for (int i = 0; i < COMMIT_WIDTH; i++) begin
             if (recoveryReg.valid && (esRA[i] == recoveryReg.ptr)) begin
                 headExecState[i] = recoveryReg.state;
@@ -430,7 +571,11 @@ module ActiveList(
         else begin
             for (int i = 0; i < RENAME_WIDTH; i++) begin
                 ffsWE[i] = port.pushTail[i];
+        `ifdef RSD_ENABLE_SMT
+                ffsWA[i] = pushedTailPtr[port.thread[i]][i];
+`else
                 ffsWA[i] = pushedTailPtr[i];
+`endif
                 ffsWV[i] = '0;
             end
 
@@ -441,7 +586,11 @@ module ActiveList(
             end
         end
 
-        ffsRA = headPtrList;
+`ifdef RSD_ENABLE_SMT
+ffsRA = headPtrList[port.thread[0]];
+`else
+ffsRA = headPtrList;
+`endif
         port.fflagsData = ffsRV;
     end
 `endif

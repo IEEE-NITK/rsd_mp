@@ -25,6 +25,11 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
     logic allocateStoreQueue [ RENAME_WIDTH ];
     LoadQueueIndexPath allocatedLoadQueuePtr [ RENAME_WIDTH ];
     StoreQueueIndexPath allocatedStoreQueuePtr [ RENAME_WIDTH ];
+    
+    // Thread context (SMT support, always defined for Verilator compatibility)
+    ThreadID allocateLoadQueueThread [ RENAME_WIDTH ];
+    ThreadID allocateStoreQueueThread [ RENAME_WIDTH ];
+    ThreadID thread [ COMMIT_WIDTH ];  // Current thread(s) executing loads/stores
 
     // Execution
     logic executeLoad [ LOAD_ISSUE_WIDTH ];
@@ -74,12 +79,18 @@ interface LoadStoreUnitIF( input logic clk, rst, rstStart );
 
     // SQ status.
     logic storeQueueEmpty;
+`ifdef RSD_ENABLE_SMT
+    StoreQueueIndexPath storeQueueHeadPtr[THREAD_NUM];
+    StoreQueueCountPath storeQueueCount[THREAD_NUM];
+    LoadQueueIndexPath loadQueueHeadPtr[THREAD_NUM];
+`else
     StoreQueueIndexPath storeQueueHeadPtr;
     StoreQueueCountPath storeQueueCount;
+    LoadQueueIndexPath loadQueueHeadPtr;
+`endif
 
     // Recover
     logic busyInRecovery;
-
 
     // Store-Load Forwarding
     logic storeLoadForwarded [ LOAD_ISSUE_WIDTH ];
