@@ -13,7 +13,7 @@
 
 
 # Specify the root directory where you checked out RSD.
-export RSD_ROOT=/home/friday/rsd_mp
+export RSD_ROOT=/home/friday/rsd_smt_mp/rsd_mp
 
 
 # Specify the path of a directory that contains a gcc cross compiler binary for RISC-V. 
